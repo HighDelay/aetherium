@@ -5,6 +5,11 @@ and versions follow [Semantic Versioning](https://semver.org).
 
 ## [Unreleased]
 
+### Fixed
+
+- NeoForge: the game crashed at startup ("Texture does not exist") when a texture atlas ticked before it was
+  first uploaded, which NeoForge does while resources are still loading.
+
 ## [0.1.0] - 2026-10-06
 
 The first release.
