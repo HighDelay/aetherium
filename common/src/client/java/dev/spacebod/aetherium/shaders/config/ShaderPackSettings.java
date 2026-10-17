@@ -5,6 +5,7 @@ import com.google.gson.GsonBuilder;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
+import com.mojang.blaze3d.Blaze3D;
 import dev.spacebod.aetherium.shaders.AetheriumShaders;
 import dev.spacebod.aetherium.shaders.shaderpack.ShadowOverrides;
 import java.io.IOException;
@@ -43,6 +44,18 @@ public final class ShaderPackSettings {
 
 	public static Path packsDirectory() {
 		return AetheriumShaders.getShaderpacksDirectory();
+	}
+
+	/** Shows the shader packs folder in the system's file manager, creating it first if it does not exist yet. */
+	public static void openPacksDirectory() {
+		Path dir = packsDirectory();
+		try {
+			Files.createDirectories(dir);
+		} catch (IOException | RuntimeException e) {
+			AetheriumShaders.logger.error("could not create {}", dir, e);
+			return;
+		}
+		Blaze3D.openPath(dir);
 	}
 
 	private static Path configFile() {

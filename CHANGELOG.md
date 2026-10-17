@@ -9,6 +9,8 @@ and versions follow [Semantic Versioning](https://semver.org).
 
 - NeoForge: the game crashed at startup ("Texture does not exist") when a texture atlas ticked before it was
   first uploaded, which NeoForge does while resources are still loading.
+- The shader pack screen's "Open packs folder" did nothing when the `shaderpacks` folder did not exist yet; it now
+  creates the folder and opens it.
 
 ## [0.1.0] - 2026-10-06
 

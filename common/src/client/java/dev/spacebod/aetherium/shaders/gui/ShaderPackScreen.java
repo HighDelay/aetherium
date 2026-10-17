@@ -1,6 +1,5 @@
 package dev.spacebod.aetherium.shaders.gui;
 
-import com.mojang.blaze3d.Blaze3D;
 import com.mojang.blaze3d.platform.InputConstants;
 import dev.spacebod.aetherium.shaders.AetheriumShaders;
 import dev.spacebod.aetherium.shaders.config.ShaderPackSettings;
@@ -1111,7 +1110,7 @@ public final class ShaderPackScreen extends Screen {
 			items.add(new Choice(t("reset_all"), false, this::askResetAll));
 		}
 		items.add(new Choice(t("reload"), false, this::reloadFromDisk));
-		items.add(new Choice(t("open_folder"), false, () -> Blaze3D.openPath(ShaderPackSettings.packsDirectory())));
+		items.add(new Choice(t("open_folder"), false, ShaderPackSettings::openPacksDirectory));
 		int w = 0;
 		for (Choice c : items) {
 			w = Math.max(w, font.width(c.label()));
@@ -1205,7 +1204,7 @@ public final class ShaderPackScreen extends Screen {
 		}
 		int by0 = y1 - pad - 18, by1 = y1 - pad;
 		int fw = font.width(t("open_folder")) + 20;
-		button(g, font, x0 + pad, by0, x0 + pad + fw, by1, t("open_folder"), false, mx, my, () -> Blaze3D.openPath(ShaderPackSettings.packsDirectory()));
+		button(g, font, x0 + pad, by0, x0 + pad + fw, by1, t("open_folder"), false, mx, my, ShaderPackSettings::openPacksDirectory);
 		int rw = font.width(t("reload")) + 20;
 		button(g, font, x0 + pad + fw + 4, by0, x0 + pad + fw + 4 + rw, by1, t("reload"), false, mx, my, this::reloadFromDisk);
 		int closeW = Math.max(52, font.width(t("close")) + 20);
@@ -1258,7 +1257,7 @@ public final class ShaderPackScreen extends Screen {
 		try {
 			ShaderPackSettings.writeOptionsTo(file, options.changesToSave());
 			exportedTo = file.getFileName().toString();
-			Blaze3D.openPath(ShaderPackSettings.packsDirectory());
+			ShaderPackSettings.openPacksDirectory();
 		} catch (IOException | RuntimeException e) {
 			AetheriumShaders.logger.error("could not export settings to {}", file, e);
 			exportedTo = null;
