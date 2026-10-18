@@ -917,6 +917,24 @@ public final class ShaderPackEngine implements ShadowFrame.Passes {
 		}
 	}
 
+	/**
+	 * {@code PreparedRenderType.draw} after its draw: the pipeline to draw the same geometry again with, as the
+	 * enchantment glint over the item, or null. Only for a single-pass glint pipeline drawn by a pack program in a
+	 * gbuffer pass, when the pack has its own glint program ({@link WorldPrograms#glint}).
+	 */
+	public @Nullable CompiledRenderPipeline glintPass(RenderPipeline vanilla) {
+		if (!gbufferPassOpen || state != State.ACTIVE || skipAllRendering || passProgram == null || (featureFlags & DrawIds.SHADOW_ONLY) != 0
+				|| !PipelinePrograms.singlePassGlint(vanilla)) {
+			return null;
+		}
+		try {
+			return worldPrograms.glint(vanilla);
+		} catch (RuntimeException e) {
+			fail("building the glint program for " + vanilla.getLocation(), e);
+			return null;
+		}
+	}
+
 	/** What {@link #substituteRouted} last returned (null after anything else), and the pack program behind it. */
 	private @Nullable CompiledRenderPipeline substituted;
 	private @Nullable WorldProgram substitutedProgram;
@@ -2509,6 +2527,7 @@ public final class ShaderPackEngine implements ShadowFrame.Passes {
 	private void prebuildWorldPrograms() {
 		for (RenderPipeline pipeline : PipelinePrograms.mainPipelines()) {
 			worldPrograms.prebuild(pipeline, PipelinePrograms.Context.WORLD);
+			worldPrograms.prebuildGlint(pipeline);
 		}
 		for (PipelinePrograms.Context hand : new PipelinePrograms.Context[]{PipelinePrograms.Context.HAND, PipelinePrograms.Context.HAND_TRANSLUCENT}) {
 			for (RenderPipeline pipeline : PipelinePrograms.mainPipelines()) {

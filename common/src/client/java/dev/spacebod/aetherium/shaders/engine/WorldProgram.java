@@ -30,6 +30,7 @@ import dev.spacebod.aetherium.shaders.pipeline.transform.PatchShaderType;
 import dev.spacebod.aetherium.shaders.pipeline.transform.lowering.LoweredProgram;
 import dev.spacebod.aetherium.shaders.pipeline.transform.lowering.LoweringParameters;
 import dev.spacebod.aetherium.shaders.pipeline.transform.transformer.VanillaInterface;
+import dev.spacebod.aetherium.shaders.shaderpack.loading.ProgramId;
 import dev.spacebod.aetherium.shaders.shaderpack.programs.ProgramSource;
 import dev.spacebod.aetherium.shaders.uniforms.CapturedRenderingState;
 import dev.spacebod.aetherium.shaders.uniforms.CommonUniforms;
@@ -93,6 +94,20 @@ public final class WorldProgram implements AutoCloseable {
 			return state;
 		}
 		return new DepthStencilState(state.depthTest(), true, state.depthBiasScaleFactor(), state.depthBiasConstant());
+	}
+
+	/** Whether the pack has its own {@code gbuffers_armor_glint} (not a fallback): it then draws the single-pass glint. */
+	static boolean packGlint(ProgramSource source) {
+		return source.getParent().get(ProgramId.ArmorGlint).isPresent();
+	}
+
+	/**
+	 * The glint drawn over an item already in the depth buffer, as vanilla's own glint pipeline: equal depth, no depth
+	 * write, the item's depth bias so the two depths match.
+	 */
+	private static DepthStencilState glintDepthState(@Nullable DepthStencilState item) {
+		return item == null ? new DepthStencilState(CompareOp.EQUAL, false)
+				: new DepthStencilState(CompareOp.EQUAL, false, item.depthBiasScaleFactor(), item.depthBiasConstant());
 	}
 
 	/** Vanilla's reversed-depth state for the shadow pass's OpenGL depth: comparison mirrored, bias sign flipped. */
@@ -196,12 +211,14 @@ public final class WorldProgram implements AutoCloseable {
 		AlphaTest alpha = source.getDirectives().getAlphaTestOverride().orElse(key.getAlphaTest());
 		boolean lines = !vertexPulled && formats.getFirst().contains("LineWidth");
 		long started = System.nanoTime();
-		// Single-pass enchantment glint (26.3's GLINT define): the item's program adds vanilla's glint term itself.
+		// Single-pass enchantment glint (26.3's GLINT define): the item's program adds vanilla's glint term itself, unless
+		// the pack has its own glint program, which draws over the item afterwards (glintPass).
 		boolean singlePassGlint = !shadow && !key.isGlint() && vanilla.getShaderDefines().flags().contains("GLINT");
+		boolean glintPass = !shadow && key.isGlint() && vanilla.getShaderDefines().flags().contains("GLINT");
 		BindGroupLayout.UniformDescription vanillaGlintSampler = BindGroupLayout.flattenUniforms(vanilla.getBindGroupLayouts()).stream()
 				.filter(u -> u.name().equals("GlintSampler")).findFirst().orElse(null);
 		boolean wantGlint = singlePassGlint && vanillaGlintSampler != null && !vanilla.getShaderDefines().flags().contains("GLINT_SPECIAL")
-				&& drawBuffers.length > 0 && indexOf(layout.attachments(), drawBuffers[0]) >= 0;
+				&& !packGlint(source) && drawBuffers.length > 0 && indexOf(layout.attachments(), drawBuffers[0]) >= 0;
 		var glintParameters = !singlePassGlint ? LoweringParameters.Glint.NONE
 				: new LoweringParameters.Glint(true,
 						wantGlint ? indexOf(layout.attachments(), drawBuffers[0]) : -1);
@@ -262,7 +279,8 @@ public final class WorldProgram implements AutoCloseable {
 				// The shadow pass draws without back-face culling (a hill's far side still casts its shadow).
 				// Transparent LODs (water) draw both faces, as packs written for them expect.
 				.withCull(!shadow && vanilla.isCull() && key != ShaderKey.LOD_WATER)
-				.withDepthStencilState(Optional.ofNullable(shadow ? glDepthState(vanilla.getDepthStencilState()) : depthState(source, key, vanilla)));
+				.withDepthStencilState(Optional.ofNullable(shadow ? glDepthState(vanilla.getDepthStencilState())
+						: glintPass ? glintDepthState(vanilla.getDepthStencilState()) : depthState(source, key, vanilla)));
 		if (vanilla.pushConstantSize() > 0) {
 			// The draw loop pushes its constants (the chunk renderer's region offset) whichever program is bound.
 			builder.withPushConstantSize(vanilla.pushConstantSize());
@@ -273,7 +291,8 @@ public final class WorldProgram implements AutoCloseable {
 			}
 		}
 		ColorTargetState vanillaTarget = vanilla.getColorTargetStates().isEmpty() ? null : vanilla.getColorTargetStates().getFirst();
-		Optional<BlendFunction> vanillaBlend = vanillaTarget == null ? Optional.empty() : vanillaTarget.blendFunction();
+		Optional<BlendFunction> vanillaBlend = glintPass ? Optional.of(BlendFunction.GLINT)
+				: vanillaTarget == null ? Optional.empty() : vanillaTarget.blendFunction();
 		int writeMask = vanillaTarget == null ? ColorTargetState.WRITE_ALL : vanillaTarget.writeMask();
 		int[] attachments = layout.attachments();
 		ColorTargetState[] targets = PipelineState.colorTargets(attachments, layout::format, drawBuffers, source.getDirectives(), vanillaBlend, writeMask);
@@ -310,7 +329,8 @@ public final class WorldProgram implements AutoCloseable {
 						() -> RenderSystem.getDevice().compilePipeline(pipeline, shaderSource, Runnable::run).join());
 		AetheriumShaders.logger.debug("[{}] built on {}: transform {} ms, compile {} ms", label, Thread.currentThread().getName(),
 				(transformed - started) / 1_000_000, (System.nanoTime() - transformed) / 1_000_000);
-		var depthState = shadow ? glDepthState(vanilla.getDepthStencilState()) : depthState(source, key, vanilla);
+		var depthState = shadow ? glDepthState(vanilla.getDepthStencilState())
+				: glintPass ? glintDepthState(vanilla.getDepthStencilState()) : depthState(source, key, vanilla);
 		boolean writesDepth = depthState != null && depthState.writeDepth();
 		return new Built(label, key, pending, prepared.layout(), samplers, drawBuffers, writesDepth, blend, prepared.notes(), stages);
 	}

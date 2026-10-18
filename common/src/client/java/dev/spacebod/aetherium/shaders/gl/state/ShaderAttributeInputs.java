@@ -12,6 +12,8 @@ public class ShaderAttributeInputs {
 	private boolean normal;
 	private boolean newLines;
 	private boolean glint;
+	/** A glint program on a pipeline whose glint coordinate is UV3 (GLINT_SPECIAL), not UV0. */
+	private boolean glintUv3;
 	private boolean text;
 	private int entityComponents;
 	// hashCode and equals are hand-written: update both when adding fields.
@@ -47,6 +49,10 @@ public class ShaderAttributeInputs {
 
 			if ("Normal".equals(name)) {
 				normal = true;
+			}
+
+			if ("UV3".equals(name) && glint) {
+				glintUv3 = true;
 			}
 		});
 
@@ -101,6 +107,10 @@ public class ShaderAttributeInputs {
 		return glint;
 	}
 
+	public boolean isGlintUv3() {
+		return glintUv3;
+	}
+
 	public int getEntityComponents() {
 		return entityComponents;
 	}
@@ -116,6 +126,7 @@ public class ShaderAttributeInputs {
 		result = prime * result + (normal ? 1231 : 1237);
 		result = prime * result + (newLines ? 1231 : 1237);
 		result = prime * result + (glint ? 1231 : 1237);
+		result = prime * result + (glintUv3 ? 1231 : 1237);
 		result = prime * result + (text ? 1231 : 1237);
 		result = prime * result + entityComponents;
 		return result;
@@ -143,6 +154,8 @@ public class ShaderAttributeInputs {
 		if (newLines != other.newLines)
 			return false;
 		if (glint != other.glint)
+			return false;
+		if (glintUv3 != other.glintUv3)
 			return false;
 		if (text != other.text)
 			return false;

@@ -36,7 +36,13 @@ public class VanillaTransformer {
 			tree.parseAndInjectNode(t, ASTInjectionPoint.BEFORE_DECLARATIONS,
 				"in float aeth_LineWidth;");
 
-			if (parameters.inputs.hasTex() && !parameters.isClouds()) {
+			if (parameters.inputs.isGlintUv3()) {
+				// GLINT_SPECIAL items scroll the glint over their own UV3, not the albedo's UV0.
+				root.replaceReferenceExpressions(t, "gl_MultiTexCoord0",
+					"vec4(aeth_UV3, 0.0, 1.0)");
+				tree.parseAndInjectNode(t, ASTInjectionPoint.BEFORE_DECLARATIONS,
+					"in vec2 aeth_UV3;");
+			} else if (parameters.inputs.hasTex() && !parameters.isClouds()) {
 				root.replaceReferenceExpressions(t, "gl_MultiTexCoord0",
 					"vec4(aeth_UV0, 0.0, 1.0)");
 				tree.parseAndInjectNode(t, ASTInjectionPoint.BEFORE_DECLARATIONS,
@@ -71,7 +77,14 @@ public class VanillaTransformer {
 			CommonTransformer.replaceGlMultiTexCoordBounded(t, root, 4, 7);
 		}
 
-		if (parameters.inputs.hasColor() && parameters.type == PatchShaderType.VERTEX) {
+		if (parameters.inputs.isGlint()) {
+			// The glint ignores the vertex colour (an item's tint), as vanilla's glint does.
+			root.replaceReferenceExpressions(t, "gl_Color", "vec4(aeth_transforms.ColorModulator.rgb, aeth_transforms.ColorModulator.a * aeth_globalInfo.GlintAlpha)");
+			if (parameters.inputs.hasColor() && parameters.type.glShaderType == ShaderType.VERTEX) {
+				// Still read by the engine's own vertex colour pass-through.
+				tree.parseAndInjectNode(t, ASTInjectionPoint.BEFORE_DECLARATIONS, "in vec4 aeth_Color;");
+			}
+		} else if (parameters.inputs.hasColor() && parameters.type == PatchShaderType.VERTEX) {
 			// The vertex attribute; a fragment stage reads gl_Color as the interpolated aeth_vColor (CommonTransformer).
 			if (parameters.alpha.reference() == Float.MAX_VALUE) {
 				root.replaceReferenceExpressions(t, "gl_Color",
@@ -87,9 +100,6 @@ public class VanillaTransformer {
 				tree.parseAndInjectNode(t, ASTInjectionPoint.BEFORE_DECLARATIONS,
 					"in vec4 aeth_Color;");
 			}
-		} else if (parameters.inputs.isGlint()) {
-			// The colour modulator applies regardless of the alpha test state.
-			root.replaceReferenceExpressions(t, "gl_Color", "vec4(aeth_transforms.ColorModulator.rgb, aeth_transforms.ColorModulator.a * aeth_globalInfo.GlintAlpha)");
 		} else {
 			// The colour modulator applies regardless of the alpha test state.
 			root.replaceReferenceExpressions(t, "gl_Color", "aeth_transforms.ColorModulator");

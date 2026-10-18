@@ -105,7 +105,8 @@ public final class PipelinePrograms {
 		main(RenderPipelines.FLAT_CLOUDS, ShaderKey.CLOUDS);
 		mainChoice(RenderPipelines.BANNER_PATTERN, PipelinePrograms::translucent);
 		// 26.3 draws the enchantment glint in the same draw (GLINT define): the pack's base program lights the item and
-		// adds vanilla's glint term itself (WorldProgram.addGlint).
+		// adds vanilla's glint term itself, or, when the pack has gbuffers_armor_glint, that program draws the glint over
+		// the item right after (WorldPrograms.glint).
 		mainChoice(RenderPipelines.ITEM_CUTOUT_GLINT, PipelinePrograms::cutout);
 		mainChoice(RenderPipelines.ITEM_CUTOUT_GLINT_SPECIAL, PipelinePrograms::cutout);
 		mainChoice(RenderPipelines.ITEM_TRANSLUCENT_GLINT, PipelinePrograms::itemTranslucent);
@@ -187,6 +188,11 @@ public final class PipelinePrograms {
 		main(pipeline, main);
 		shadow(pipeline, shadow);
 		return true;
+	}
+
+	/** A pipeline that draws the enchantment glint in the item's own draw (26.3's GLINT define). */
+	public static boolean singlePassGlint(RenderPipeline pipeline) {
+		return pipeline.getShaderDefines().flags().contains("GLINT");
 	}
 
 	/** Every vanilla pipeline with a main-pass program, terrain first. */

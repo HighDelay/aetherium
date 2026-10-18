@@ -616,6 +616,11 @@ final class ShaderPackCompile {
 				programs.add(new Program(block + "@entity", byName.get(block).sources()));
 			}
 		}
+		// The glint drawn over enchanted items, in the item formats (UV3 carries the glint coordinate on special items).
+		if (byName.containsKey("gbuffers_armor_glint")) {
+			programs.add(new Program("gbuffers_armor_glint@item", byName.get("gbuffers_armor_glint").sources()));
+			programs.add(new Program("gbuffers_armor_glint@item_special", byName.get("gbuffers_armor_glint").sources()));
+		}
 	}
 
 	// ------------------------------------------------------------------ lowering and compiling
@@ -777,6 +782,9 @@ final class ShaderPackCompile {
 		}
 		if (p.matches("beaconbeam")) {
 			return com.mojang.blaze3d.vertex.DefaultVertexFormat.POSITION_TEX_COLOR;
+		}
+		if (p.equals("item_special")) {
+			return com.mojang.blaze3d.vertex.DefaultVertexFormat.ENTITY_GLINT_SPECIAL;
 		}
 		return com.mojang.blaze3d.vertex.DefaultVertexFormat.ENTITY;
 	}

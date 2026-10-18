@@ -11,6 +11,8 @@ and versions follow [Semantic Versioning](https://semver.org).
   first uploaded, which NeoForge does while resources are still loading.
 - The shader pack screen's "Open packs folder" did nothing when the `shaderpacks` folder did not exist yet; it now
   creates the folder and opens it.
+- Enchanted items and armour showed a garbled, rainbow-striped glint with packs that store packed data in their
+  first output (Photon). Packs with their own glint program now draw the glint with it, over the item.
 
 ## [0.1.0] - 2026-10-06
 

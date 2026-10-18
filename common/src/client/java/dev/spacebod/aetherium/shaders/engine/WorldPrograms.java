@@ -14,6 +14,7 @@ import com.mojang.renderpearl.api.vertex.VertexFormat;
 import dev.spacebod.aetherium.shaders.AetheriumShaders;
 import dev.spacebod.aetherium.shaders.pipeline.PipelinePrograms;
 import dev.spacebod.aetherium.shaders.pipeline.programs.ShaderKey;
+import dev.spacebod.aetherium.shaders.shaderpack.loading.ProgramId;
 import dev.spacebod.aetherium.shaders.shaderpack.programs.ProgramFallbackResolver;
 import dev.spacebod.aetherium.shaders.shaderpack.programs.ProgramSet;
 import dev.spacebod.aetherium.shaders.shaderpack.programs.ProgramSource;
@@ -77,6 +78,13 @@ public final class WorldPrograms implements AutoCloseable {
 	private final List<CompiledRenderPipeline> widened = new ArrayList<>();
 	private final Map<RenderPipeline, CompiledRenderPipeline> skipped = new IdentityHashMap<>();
 	private final Map<ShaderKey, Optional<ProgramSource>> sources = new EnumMap<>(ShaderKey.class);
+	/**
+	 * Per single-pass glint pipeline: the pack's glint program built for it, drawn over the item after its own draw
+	 * ({@link #glint}); null when it could not be built.
+	 */
+	private final Map<RenderPipeline, @Nullable CompiledRenderPipeline> glints = new IdentityHashMap<>();
+	/** The pack has its own gbuffers_armor_glint: it draws the single-pass glint ({@link #glint}). */
+	private final boolean packGlint;
 	/** Per vanilla compiled pipeline: what it draws with in each context ({@link #route}). */
 	private final Map<CompiledRenderPipeline, Route> routes = new IdentityHashMap<>();
 	/** Per program source: the targets its declared samplers name, for programs not built yet ({@link #reach}). */
@@ -92,6 +100,7 @@ public final class WorldPrograms implements AutoCloseable {
 		this.resolver = new ProgramFallbackResolver(programs);
 		this.layout = layout;
 		this.customUniforms = customUniforms;
+		this.packGlint = !shadow && resolver.has(ProgramId.ArmorGlint);
 	}
 
 	/** The pipeline to draw with in place of {@code vanilla} (never null: falls back to the vanilla pipeline widened). */
@@ -107,6 +116,43 @@ public final class WorldPrograms implements AutoCloseable {
 		resolved.put(k, pipeline);
 		generation++;
 		return pipeline;
+	}
+
+	/**
+	 * The pack's glint program for a single-pass glint pipeline ({@link PipelinePrograms#singlePassGlint}), drawn over
+	 * the item right after its own draw; null when the pack has no gbuffers_armor_glint (the item's program then adds the
+	 * glint itself) or the program could not be built.
+	 */
+	public @Nullable CompiledRenderPipeline glint(RenderPipeline vanilla) {
+		if (!drawsGlint(vanilla)) {
+			return null;
+		}
+		if (glints.containsKey(vanilla)) {
+			return glints.get(vanilla);
+		}
+		Key k = new Key(vanilla, ShaderKey.GLINT);
+		Job job = inFlight.get(k);
+		CompiledRenderPipeline pipeline = job != null ? finishProgram(k, job) : buildProgram(vanilla, ShaderKey.GLINT);
+		glints.put(vanilla, pipeline);
+		generation++;
+		return pipeline;
+	}
+
+	/** Whether {@code vanilla}'s glint is drawn by the pack's glint program ({@link #glint}). */
+	private boolean drawsGlint(RenderPipeline vanilla) {
+		return packGlint && PipelinePrograms.singlePassGlint(vanilla);
+	}
+
+	/** Queues a background build of the glint program {@code vanilla} gets (no-op when there is none). */
+	public void prebuildGlint(RenderPipeline vanilla) {
+		if (drawsGlint(vanilla) && !glints.containsKey(vanilla)) {
+			queue(new Key(vanilla, ShaderKey.GLINT));
+		}
+	}
+
+	/** A queued build of a glint program ({@link #glint}) rather than of the program bound in place of its pipeline. */
+	private boolean isGlint(Key k) {
+		return k.shaderKey() == ShaderKey.GLINT && drawsGlint(k.vanilla());
 	}
 
 	/**
@@ -208,14 +254,20 @@ public final class WorldPrograms implements AutoCloseable {
 			return;
 		}
 		Key k = new Key(vanilla, key);
-		if (resolved.containsKey(k) || inFlight.containsKey(k)) {
+		if (!resolved.containsKey(k)) {
+			queue(k);
+		}
+	}
+
+	private void queue(Key k) {
+		if (inFlight.containsKey(k)) {
 			return;
 		}
-		Optional<ProgramSource> source = sources.computeIfAbsent(key, s -> resolver.resolve(s.getProgram()));
+		Optional<ProgramSource> source = sources.computeIfAbsent(k.shaderKey(), s -> resolver.resolve(s.getProgram()));
 		if (source.isEmpty()) {
 			return;
 		}
-		Job job = new Job(() -> closed ? null : WorldProgram.compile(source.get(), key, vanilla, layout, shadow));
+		Job job = new Job(() -> closed ? null : WorldProgram.compile(source.get(), k.shaderKey(), k.vanilla(), layout, shadow));
 		inFlight.put(k, job);
 		COMPILER.execute(job::run);
 	}
@@ -228,8 +280,7 @@ public final class WorldPrograms implements AutoCloseable {
 		for (var it = new ArrayList<>(inFlight.entrySet()).iterator(); it.hasNext(); ) {
 			var e = it.next();
 			if (e.getValue().result.isDone()) {
-				resolved.put(e.getKey(), finish(e.getKey(), e.getValue()));
-				generation++;
+				complete(e.getKey(), e.getValue());
 			}
 		}
 	}
@@ -241,15 +292,24 @@ public final class WorldPrograms implements AutoCloseable {
 	public boolean ready(RenderPipeline vanilla, PipelinePrograms.Context context) {
 		ShaderKey key = shadow ? PipelinePrograms.shadow(vanilla, context) : PipelinePrograms.main(vanilla, context);
 		Job job = key == null ? null : inFlight.get(new Key(vanilla, key));
-		return job == null || job.result.isDone();
+		Job glint = drawsGlint(vanilla) ? inFlight.get(new Key(vanilla, ShaderKey.GLINT)) : null;
+		return (job == null || job.result.isDone()) && (glint == null || glint.result.isDone());
 	}
 
 	/** Render thread: finishes every queued build now, building the ones no worker started yet on this thread. */
 	public void finishAll() {
 		for (var e : new ArrayList<>(inFlight.entrySet())) {
-			resolved.put(e.getKey(), finish(e.getKey(), e.getValue()));
-			generation++;
+			complete(e.getKey(), e.getValue());
 		}
+	}
+
+	private void complete(Key k, Job job) {
+		if (isGlint(k)) {
+			glints.put(k.vanilla(), finishProgram(k, job));
+		} else {
+			resolved.put(k, finish(k, job));
+		}
+		generation++;
 	}
 
 	/** Background builds still running. */
@@ -258,6 +318,12 @@ public final class WorldPrograms implements AutoCloseable {
 	}
 
 	private CompiledRenderPipeline finish(Key k, Job job) {
+		CompiledRenderPipeline pipeline = finishProgram(k, job);
+		return pipeline != null ? pipeline : fallback(k.vanilla(), k.shaderKey());
+	}
+
+	/** {@link #finish} without the fallback: null when the program could not be built. */
+	private @Nullable CompiledRenderPipeline finishProgram(Key k, Job job) {
 		inFlight.remove(k);
 		// Not started yet: build it here rather than wait for the queue ahead of it (large packs queue 100+ programs).
 		job.run();
@@ -275,7 +341,7 @@ public final class WorldPrograms implements AutoCloseable {
 			AetheriumShaders.logger.info("{}", program.name());
 			return program.compiled();
 		}
-		return fallback(k.vanilla(), k.shaderKey());
+		return null;
 	}
 
 	/**
@@ -312,26 +378,30 @@ public final class WorldPrograms implements AutoCloseable {
 	}
 
 	private CompiledRenderPipeline build(RenderPipeline vanilla, @Nullable ShaderKey key) {
-		if (key != null) {
-			Optional<ProgramSource> source = sources.computeIfAbsent(key, k -> resolver.resolve(k.getProgram()));
-			if (source.isPresent()) {
-				WorldProgram program;
-				try {
-					program = WorldProgram.create(source.get(), key, vanilla, layout, customUniforms, shadow);
-				} catch (RuntimeException e) {
-					DeviceLoss.rethrow(e);
-					// One program failing must not take the pack (or the open render pass) down: this draw keeps vanilla's shader.
-					AetheriumShaders.logger.error("[{} for {}] failed to build; vanilla shader used", source.get().getName(), vanilla.getLocation(), e);
-					program = null;
-				}
-				if (program != null) {
-					byCompiled.put(program.compiled(), program);
-					AetheriumShaders.logger.info("{} draws {}", source.get().getName(), vanilla.getLocation());
-					return program.compiled();
-				}
+		CompiledRenderPipeline pipeline = key == null ? null : buildProgram(vanilla, key);
+		return pipeline != null ? pipeline : fallback(vanilla, key);
+	}
+
+	/** {@link #build} without the fallback: null when the pack has no program for {@code key} or it could not be built. */
+	private @Nullable CompiledRenderPipeline buildProgram(RenderPipeline vanilla, ShaderKey key) {
+		Optional<ProgramSource> source = sources.computeIfAbsent(key, k -> resolver.resolve(k.getProgram()));
+		if (source.isPresent()) {
+			WorldProgram program;
+			try {
+				program = WorldProgram.create(source.get(), key, vanilla, layout, customUniforms, shadow);
+			} catch (RuntimeException e) {
+				DeviceLoss.rethrow(e);
+				// One program failing must not take the pack (or the open render pass) down: this draw keeps vanilla's shader.
+				AetheriumShaders.logger.error("[{} for {}] failed to build; vanilla shader used", source.get().getName(), vanilla.getLocation(), e);
+				program = null;
+			}
+			if (program != null) {
+				byCompiled.put(program.compiled(), program);
+				AetheriumShaders.logger.info("{} draws {}", source.get().getName(), vanilla.getLocation());
+				return program.compiled();
 			}
 		}
-		return fallback(vanilla, key);
+		return null;
 	}
 
 	/**
@@ -463,6 +533,7 @@ public final class WorldPrograms implements AutoCloseable {
 		widened.clear();
 		skipped.clear();
 		resolved.clear();
+		glints.clear();
 		routes.clear();
 	}
 }
