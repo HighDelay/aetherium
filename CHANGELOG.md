@@ -5,18 +5,22 @@ and versions follow [Semantic Versioning](https://semver.org).
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-10-18
+
+A patch release: mining a block shows its cracks again with Photon.
+
 ### Fixed
 
+- Mining a block showed no crack with Photon. The crack is now drawn after the pack's deferred passes, wherever it
+  lies, and it is no longer drawn into the shadow map.
+- Enchanted items and armour showed a garbled, rainbow-striped glint with packs that store packed data in their
+  first output (Photon). Packs with their own glint program now draw the glint with it, over the item.
 - NeoForge: the game crashed at startup ("Texture does not exist") when a texture atlas ticked before it was
   first uploaded, which NeoForge does while resources are still loading.
 - The shader pack screen's "Open packs folder" did nothing when the `shaderpacks` folder did not exist yet; it now
   creates the folder and opens it.
-- Enchanted items and armour showed a garbled, rainbow-striped glint with packs that store packed data in their
-  first output (Photon). Packs with their own glint program now draw the glint with it, over the item.
 - The shader toggle key treated a pack that failed to load as on, so the next press only "turned it off"; it now
   tries the pack again. "Shaders on" now shows once the pack is drawing, not before it has loaded.
-- Mining a block showed no crack with Photon. The crack is now drawn after the pack's deferred passes, wherever it
-  lies, and it is no longer drawn into the shadow map.
 - On Macs, a pack's geometry stage that only passes each corner on is now folded away in more of the shapes packs
   write it (varyings in interface blocks, a loop counter declared ahead of the loop, the position held in a local),
   instead of the program falling back to the game's shader.
@@ -67,5 +71,6 @@ API.
   **Shader Packs...**.
 - A prompt to switch the game to Vulkan when it starts on OpenGL.
 
-[Unreleased]: https://github.com/SpaceBod/aetherium/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/SpaceBod/aetherium/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/SpaceBod/aetherium/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/SpaceBod/aetherium/releases/tag/v0.1.0
