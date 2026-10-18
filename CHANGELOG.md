@@ -7,7 +7,7 @@ and versions follow [Semantic Versioning](https://semver.org).
 
 ## [0.1.1] - 2026-10-18
 
-A patch release: mining a block shows its cracks again with Photon.
+A patch release for Photon: mining a block shows its cracks again, and enchanted items show a proper glint.
 
 ### Fixed
 
@@ -15,6 +15,9 @@ A patch release: mining a block shows its cracks again with Photon.
   lies, and it is no longer drawn into the shadow map.
 - Enchanted items and armour showed a garbled, rainbow-striped glint with packs that store packed data in their
   first output (Photon). Packs with their own glint program now draw the glint with it, over the item.
+
+### Also fixed
+
 - NeoForge: the game crashed at startup ("Texture does not exist") when a texture atlas ticked before it was
   first uploaded, which NeoForge does while resources are still loading.
 - The shader pack screen's "Open packs folder" did nothing when the `shaderpacks` folder did not exist yet; it now
