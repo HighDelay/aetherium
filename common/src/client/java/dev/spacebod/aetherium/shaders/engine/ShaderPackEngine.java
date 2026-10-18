@@ -228,6 +228,11 @@ public final class ShaderPackEngine implements ShadowFrame.Passes {
 	private @Nullable NamespacedId loadedDimension;
 	private @Nullable String lastError;
 
+	/** Shows {@code message} above the hotbar once the pack about to load becomes active (null: nothing); not on a failure. */
+	public void announceWhenActive(@Nullable Component message) {
+		activeMessage = message;
+	}
+
 	/**
 	 * Throws away the running pack (or the load in progress) and loads the configured one (with its saved options) from
 	 * the next frame, in the background: vanilla visuals until it is ready ({@link #loadProgress}). Called by the
@@ -2089,6 +2094,8 @@ public final class ShaderPackEngine implements ShadowFrame.Passes {
 	private int warmTotal;
 	/** Mesh settings of the loaded pack, applied when it becomes active (meshes built meanwhile stay vanilla's). */
 	private @Nullable Runnable onActivate;
+	/** A line shown above the hotbar once the pack loading now becomes active ({@link #announceWhenActive}). */
+	private @Nullable Component activeMessage;
 	/** The longest the world programs may build before the pack goes active anyway (the rest then build on demand). */
 	private static final long WARM_LIMIT_NANOS = 20_000_000_000L;
 
@@ -2106,6 +2113,7 @@ public final class ShaderPackEngine implements ShadowFrame.Passes {
 		AetheriumShaders.logger.error("could not load pack '{}', keeping vanilla visuals", packName, e);
 		lastError = e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage();
 		disable();
+		activeMessage = null;
 		notifyFailure("message.aetherium.shaders_load_failed", ShaderPackSettings.displayName(packName));
 	}
 
@@ -2418,6 +2426,14 @@ public final class ShaderPackEngine implements ShadowFrame.Passes {
 		if (activate != null) {
 			activate.run();
 		}
+		Component message = activeMessage;
+		activeMessage = null;
+		if (message != null) {
+			Minecraft mc = Minecraft.getInstance();
+			if (mc.gui != null) {
+				mc.gui.hud.setOverlayMessage(message, false);
+			}
+		}
 		// Chunk meshes built before the block IDs existed carry mc_Entity = -1; face shading or their format may have changed.
 		rebuildMeshesIfNeeded(ChunkMeshes.stale());
 		AetheriumShaders.logger.info("pack '{}' active after {} s (longest frame meanwhile {} ms){}; summed over threads: {}", loadedPack,
@@ -2554,6 +2570,7 @@ public final class ShaderPackEngine implements ShadowFrame.Passes {
 		DeviceLoss.rethrow(e);
 		AetheriumShaders.logger.error("failed {}, back to vanilla visuals", what, e);
 		lastError = "Failed " + what + (e.getMessage() == null ? "" : ": " + e.getMessage());
+		activeMessage = null;
 		notifyFailure("message.aetherium.shaders_stopped", what);
 		if (gbufferPassOpen || shadowPassOpen) {
 			// The open render pass has the pack's attachments (gbuffers or shadow map); vanilla's own pipelines cannot bind

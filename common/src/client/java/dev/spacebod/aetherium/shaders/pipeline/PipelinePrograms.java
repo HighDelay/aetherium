@@ -136,7 +136,7 @@ public final class PipelinePrograms {
 				shadow(entity, ShaderKey.SHADOW_ENTITIES_CUTOUT);
 			}
 		}
-		shadow(RenderPipelines.CRUMBLING, ShaderKey.SHADOW_TEX);
+		// CRUMBLING has none: the block-breaking crack casts no shadow.
 		shadow(RenderPipelines.WEATHER, ShaderKey.SHADOW_PARTICLES);
 		shadow(RenderPipelines.OPAQUE_PARTICLE, ShaderKey.SHADOW_PARTICLES);
 		shadow(RenderPipelines.TRANSLUCENT_PARTICLE, ShaderKey.SHADOW_PARTICLES);

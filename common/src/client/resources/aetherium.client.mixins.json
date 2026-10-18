@@ -55,6 +55,8 @@
 		"shaders.VulkanRenderPipelineMixin",
 		"shaders.ClientLevelWeatherMixin",
 		"shaders.CloudTimeMixin",
+		"shaders.CrackPhaseMixin",
+		"shaders.CrackRouteMixin",
 		"shaders.DebugSystemSpecsMixin",
 		"shaders.EndPortalMixin",
 		"shaders.HudMixin",

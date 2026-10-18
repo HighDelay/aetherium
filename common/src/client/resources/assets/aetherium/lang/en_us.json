@@ -5,6 +5,7 @@
   "key.aetherium.shader_settings": "Shader Pack Settings",
   "key.aetherium.shader_toggle": "Toggle Shaders",
   "message.aetherium.shaders_on": "Shaders on: %s",
+  "message.aetherium.shaders_turning_on": "Turning shaders on: %s",
   "message.aetherium.shaders_off": "Shaders off",
   "message.aetherium.shaders_load_failed": "Shader pack %s could not load: vanilla visuals (details in the shader settings, O)",
   "message.aetherium.shaders_stopped": "Shader pack stopped (%s): vanilla visuals (details in the shader settings, O)",

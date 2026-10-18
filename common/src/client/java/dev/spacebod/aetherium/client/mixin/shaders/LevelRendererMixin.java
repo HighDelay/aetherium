@@ -1,5 +1,6 @@
 package dev.spacebod.aetherium.client.mixin.shaders;
 
+import com.llamalad7.mixinextras.injector.wrapmethod.WrapMethod;
 import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
 import com.llamalad7.mixinextras.injector.wrapoperation.WrapOperation;
 import com.llamalad7.mixinextras.sugar.Local;
@@ -7,8 +8,10 @@ import com.mojang.blaze3d.framegraph.FrameGraphBuilder;
 import com.mojang.blaze3d.framegraph.FramePass;
 import com.mojang.blaze3d.pipeline.RenderTarget;
 import com.mojang.blaze3d.systems.RenderSystem;
+import com.mojang.blaze3d.vertex.PoseStack;
 import com.mojang.renderpearl.api.buffers.GpuBufferSlice;
 import com.mojang.renderpearl.api.commands.RenderPass;
+import dev.spacebod.aetherium.shaders.engine.CrackRouting;
 import dev.spacebod.aetherium.shaders.engine.EntityPhases;
 import dev.spacebod.aetherium.shaders.engine.ShaderPackEngine;
 import dev.spacebod.aetherium.shaders.pathways.HorizonRenderer;
@@ -17,8 +20,10 @@ import java.util.OptionalDouble;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.LevelRenderer;
 import net.minecraft.client.renderer.LevelTargetBundle;
+import net.minecraft.client.renderer.SubmitNodeCollector;
 import net.minecraft.client.renderer.chunk.ChunkSectionsToRender;
 import net.minecraft.client.renderer.feature.FeatureRenderDispatcher;
+import net.minecraft.client.renderer.state.level.LevelRenderState;
 import org.jspecify.annotations.Nullable;
 import org.spongepowered.asm.mixin.Final;
 import org.spongepowered.asm.mixin.Mixin;
@@ -79,6 +84,17 @@ abstract class LevelRendererMixin {
 		}
 		aetherium$shaderSections = sections;
 		aetherium$shaderFeatures = features;
+	}
+
+	/** The block-breaking cracks go to the breaking overlay, drawn after the deferred passes ({@link CrackRouting}). */
+	@WrapMethod(method = "submitBlockDestroyAnimation")
+	private void aetherium$cracksAfterDeferred(PoseStack poseStack, SubmitNodeCollector collector, LevelRenderState state, Operation<Void> original) {
+		CrackRouting.submitting(true);
+		try {
+			original.call(poseStack, collector, state);
+		} finally {
+			CrackRouting.submitting(false);
+		}
 	}
 
 	/** The translucent entity phases go with the solid entities, before the deferred passes ({@link EntityPhases}). */

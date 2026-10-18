@@ -34,7 +34,9 @@ public final class ShaderKeys {
 		}
 		while (TOGGLE.consumeClick()) {
 			if (minecraft.gui.screen() == null) {
-				boolean on = ShaderPackSettings.activePack().isPresent();
+				ShaderPackEngine engine = ShaderPackEngine.get();
+				// A pack that failed to load counts as off: the press tries it again.
+				boolean on = ShaderPackSettings.activePack().isPresent() && engine.lastError() == null;
 				Optional<String> configured = ShaderPackSettings.configuredPack();
 				if (!on && configured.isEmpty()) {
 					message(minecraft, Component.translatable("message.aetherium.shaders_none"));
@@ -43,9 +45,16 @@ public final class ShaderKeys {
 				ShaderPackSettings.setActivePack(on ? null : configured.get());
 				// The pack's files may have changed while it was off: the settings screen reads them again too.
 				PackOptions.forgetAll();
-				ShaderPackEngine.get().reload();
-				message(minecraft, on ? Component.translatable("message.aetherium.shaders_off")
-						: Component.translatable("message.aetherium.shaders_on", ShaderPackSettings.displayName(configured.get())));
+				engine.reload();
+				if (on) {
+					engine.announceWhenActive(null);
+					message(minecraft, Component.translatable("message.aetherium.shaders_off"));
+				} else {
+					// "On" once the pack draws; a failed load says so instead.
+					String name = ShaderPackSettings.displayName(configured.get());
+					engine.announceWhenActive(Component.translatable("message.aetherium.shaders_on", name));
+					message(minecraft, Component.translatable("message.aetherium.shaders_turning_on", name));
+				}
 			}
 		}
 		while (RELOAD.consumeClick()) {

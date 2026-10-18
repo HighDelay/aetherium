@@ -13,6 +13,13 @@ and versions follow [Semantic Versioning](https://semver.org).
   creates the folder and opens it.
 - Enchanted items and armour showed a garbled, rainbow-striped glint with packs that store packed data in their
   first output (Photon). Packs with their own glint program now draw the glint with it, over the item.
+- The shader toggle key treated a pack that failed to load as on, so the next press only "turned it off"; it now
+  tries the pack again. "Shaders on" now shows once the pack is drawing, not before it has loaded.
+- Mining a block showed no crack with Photon. The crack is now drawn after the pack's deferred passes, wherever it
+  lies, and it is no longer drawn into the shadow map.
+- On Macs, a pack's geometry stage that only passes each corner on is now folded away in more of the shapes packs
+  write it (varyings in interface blocks, a loop counter declared ahead of the loop, the position held in a local),
+  instead of the program falling back to the game's shader.
 
 ## [0.1.0] - 2026-10-06
 

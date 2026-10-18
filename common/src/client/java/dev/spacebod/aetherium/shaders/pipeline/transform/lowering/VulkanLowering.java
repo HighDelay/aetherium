@@ -81,6 +81,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.TreeMap;
 import java.util.regex.Matcher;
@@ -682,9 +683,16 @@ public final class VulkanLowering {
 	/** Whether {@link #foldGeometry} took the geometry stage out of the program. */
 	private boolean geometryFolded;
 
-	/** Copies from the first corner, then a loop over the three corners, then the end of the primitive. */
+	/**
+	 * Copies from the first corner, then a loop over the three corners (its counter declared in the loop, or ahead of it:
+	 * {@link #GEOMETRY_COUNTER}), then the end of the primitive.
+	 */
 	private static final Pattern GEOMETRY_LOOP = Pattern.compile(
-			"\\{((?:\\w+=\\w+\\[0];)*)for\\(int (\\w+)=0;\\2<3;(?:\\2\\+\\+|\\+\\+\\2|\\2\\+=1|\\2=\\2\\+1)\\)\\{(.*)}EndPrimitive\\(\\);}");
+			"\\{((?:\\w+=\\w+\\[0];)*)for\\((int )?(\\w+)=0;\\3<3;(?:\\3\\+\\+|\\+\\+\\3|\\3\\+=1|\\3=\\3\\+1)\\)\\{(.*)}EndPrimitive\\(\\);}");
+	/** A loop counter declared without a value among the first-corner copies: {@code int i; for (i = 0; ...)}. */
+	private static final Pattern GEOMETRY_COUNTER = Pattern.compile("^\\{((?:\\w+=\\w+\\[0];)*)int (\\w+);");
+	/** A corner's position read into a local first: {@code vec4 v = gl_in[i].gl_Position;}, then {@code gl_Position = v;}. */
+	private static final Pattern CORNER_POSITION_LOCAL = Pattern.compile("vec4 (\\w+)=gl_in\\[(\\w+)]\\.gl_Position");
 	private static final Pattern GEOMETRY_UNROLLED = Pattern.compile("\\{(.*)EndPrimitive\\(\\);}");
 	private static final Pattern CORNER_COPY = Pattern.compile("(\\w+)=(\\w+)\\[(\\w+)]");
 	private static final Pattern CORNER_POSITION = Pattern.compile("gl_Position=gl_in\\[(\\w+)]\\.gl_Position");
@@ -696,7 +704,8 @@ public final class VulkanLowering {
 	 * {@code gl_in} and each output from the same corner of one input, emits the vertex, and ends the primitive. The
 	 * fragment stage then declares the vertex stage's names as its inputs and fills the names it read from them before
 	 * its {@code main}; a varying copied corner by corner and interpolated after the copy is that varying interpolated.
-	 * Any other geometry stage stays, and the program is refused where the device has none.
+	 * Varyings in interface blocks are read as one varying per member ({@link #blockVaryings}). Any other geometry stage
+	 * stays, and the program is refused where the device has none.
 	 */
 	private void foldGeometry() {
 		String refused = geometryFold();
@@ -717,6 +726,9 @@ public final class VulkanLowering {
 		boolean triangles = false;
 		boolean strip = false;
 		FunctionDefinition main = null;
+		// The geometry stage's blocks as the varyings they become: instance -> member -> varying.
+		Map<String, Map<String, String>> cornerBlocks = new HashMap<>();
+		Map<String, Map<String, String>> outputBlocks = new HashMap<>();
 		for (ExternalDeclaration e : geometry.getChildren()) {
 			if (e instanceof FunctionDefinition f) {
 				if (!f.getFunctionPrototype().getName().getName().equals("main") || main != null) {
@@ -734,8 +746,22 @@ public final class VulkanLowering {
 				} else if (text.matches("layout\\((triangle_strip,max_vertices=3|max_vertices=3,triangle_strip)\\) ?out;")) {
 					strip = true;
 				} else if (d.getDeclaration() instanceof InterfaceBlockDeclaration block) {
-					if (!has(block.getTypeQualifier(), StorageType.UNIFORM)) {
-						return "an interface block";
+					if (has(block.getTypeQualifier(), StorageType.UNIFORM) || block.getBlockName().getName().equals("gl_PerVertex")) {
+						continue;
+					}
+					boolean in = has(block.getTypeQualifier(), StorageType.IN);
+					List<BlockVarying> members = blockVaryings(block);
+					if (members == null || in && (block.getVariableName() == null || block.getArraySpecifier() == null)
+							|| !in && block.getArraySpecifier() != null) {
+						return "an interface block it cannot read";
+					}
+					Map<String, String> names = new HashMap<>();
+					for (BlockVarying m : members) {
+						names.put(m.member(), m.name());
+						(in ? inputs : outputs).add(m.name());
+					}
+					if (block.getVariableName() != null) {
+						(in ? cornerBlocks : outputBlocks).put(block.getVariableName().getName(), names);
 					}
 				} else if (d.getDeclaration() instanceof TypeAndInitDeclaration decl) {
 					TypeQualifier q = decl.getType().getTypeQualifier();
@@ -760,9 +786,25 @@ public final class VulkanLowering {
 		List<List<String>> corners = new ArrayList<>();
 		List<String> indices = new ArrayList<>();
 		Map<String, String> once = new LinkedHashMap<>();
-		String body = squash(print(main.getBody()));
+		String body = cornerBlockReads(squash(print(main.getBody())), cornerBlocks, outputBlocks);
+		if (body == null) {
+			return "a block read whole";
+		}
+		String counter = null;
+		Matcher ahead = GEOMETRY_COUNTER.matcher(body);
+		if (ahead.find()) {
+			counter = ahead.group(2);
+			body = "{" + ahead.group(1) + body.substring(ahead.end());
+		}
 		Matcher loop = GEOMETRY_LOOP.matcher(body);
-		if (loop.matches()) {
+		boolean looped = loop.matches();
+		if (counter != null && (!looped || loop.group(2) != null || !loop.group(3).equals(counter))) {
+			return "a counter declared ahead of something besides the corner loop";
+		}
+		if (looped && counter == null && loop.group(2) == null) {
+			return "a loop over a counter declared elsewhere";
+		}
+		if (looped) {
 			for (String s : statements(loop.group(1))) {
 				Matcher copy = CORNER_COPY.matcher(s);
 				if (!copy.matches() || !copy.group(3).equals("0") || !outputs.contains(copy.group(1)) || !inputs.contains(copy.group(2))
@@ -770,12 +812,12 @@ public final class VulkanLowering {
 					return "main computes something before the corners (" + s + ")";
 				}
 			}
-			List<String> statements = statements(loop.group(3));
+			List<String> statements = statements(loop.group(4));
 			if (statements.isEmpty() || !statements.getLast().equals("EmitVertex()")) {
 				return "the loop does more than emit a corner";
 			}
 			corners.add(statements.subList(0, statements.size() - 1));
-			indices.add(loop.group(2));
+			indices.add(loop.group(3));
 		} else {
 			Matcher unrolled = GEOMETRY_UNROLLED.matcher(body);
 			if (!unrolled.matches()) {
@@ -799,11 +841,18 @@ public final class VulkanLowering {
 		for (int c = 0; c < corners.size(); c++) {
 			String index = indices.get(c);
 			boolean position = false;
+			String positionLocal = null;
 			Map<String, String> corner = new LinkedHashMap<>();
 			for (String s : corners.get(c)) {
 				Matcher pos = CORNER_POSITION.matcher(s);
+				Matcher local = CORNER_POSITION_LOCAL.matcher(s);
 				Matcher copy = CORNER_COPY.matcher(s);
 				if (pos.matches() && pos.group(1).equals(index)) {
+					position = true;
+				} else if (!position && positionLocal == null && local.matches() && local.group(2).equals(index)) {
+					// Read into a local and written from it unchanged: any other use of the local is refused below.
+					positionLocal = local.group(1);
+				} else if (!position && positionLocal != null && s.equals("gl_Position=" + positionLocal)) {
 					position = true;
 				} else if (!copy.matches() || !copy.group(3).equals(index) || !outputs.contains(copy.group(1)) || !inputs.contains(copy.group(2))
 						|| corner.putIfAbsent(copy.group(1), copy.group(2)) != null) {
@@ -837,6 +886,13 @@ public final class VulkanLowering {
 			return "an output is never set";
 		}
 		copies = all;
+		String blocks = flattenBlockVaryings(PatchShaderType.VERTEX, StorageType.OUT);
+		if (blocks == null) {
+			blocks = flattenBlockVaryings(PatchShaderType.FRAGMENT, StorageType.IN);
+		}
+		if (blocks != null) {
+			return blocks;
+		}
 		Map<String, Global> vertexOutputs = new HashMap<>();
 		for (Global g : globals(vertex)) {
 			if (has(g.qualifier(), StorageType.OUT)) {
@@ -883,9 +939,155 @@ public final class VulkanLowering {
 				tree.parseAndInjectNodes(t, ASTInjectionPoint.BEFORE_DECLARATIONS, declarations.toArray(String[]::new));
 			}
 		});
+		// The fragment stage's blocks filled from their varyings once those hold the vertex stage's values.
+		before(PatchShaderType.FRAGMENT).addAll(blockCopies);
+		blockCopies.clear();
 		trees.remove(PatchShaderType.GEOMETRY);
 		geometryFolded = true;
 		notes.add("geometry stage folded (it only hands each corner on; the device has no geometry stages)");
+		return null;
+	}
+
+	/** One member of a block of varyings as the varying it becomes ({@link #blockVaryings}). */
+	private record BlockVarying(String member, String name, String qualifiers, String type) {
+	}
+
+	/**
+	 * A block of varyings ({@code in} or {@code out}) as one varying per member: {@code aeth_<block>_<member>} for a
+	 * block with an instance name, the member's own name without one. Each varying keeps the block's and the member's
+	 * qualifiers besides storage and {@code layout} (interpolation, precision). Null for a block with explicit locations
+	 * or a member that is an array.
+	 */
+	private static @Nullable List<BlockVarying> blockVaryings(InterfaceBlockDeclaration block) {
+		if (hasLayout(block.getTypeQualifier(), "location")) {
+			return null;
+		}
+		String blockQualifiers = qualifierWords(block.getTypeQualifier());
+		String prefix = block.getVariableName() == null ? null : "aeth_" + block.getBlockName().getName() + "_";
+		List<BlockVarying> out = new ArrayList<>();
+		for (StructMember member : block.getStructBody().getMembers()) {
+			TypeQualifier q = member.getType().getTypeQualifier();
+			if (hasLayout(q, "location") || member.getType().getTypeSpecifier().getArraySpecifier() != null) {
+				return null;
+			}
+			String qualifiers = (blockQualifiers + " " + qualifierWords(q)).trim();
+			for (StructDeclarator declarator : member.getDeclarators()) {
+				if (declarator.getArraySpecifier() != null) {
+					return null;
+				}
+				String name = declarator.getName().getName();
+				out.add(new BlockVarying(name, prefix == null ? name : prefix + name, qualifiers, print(member.getType().getTypeSpecifier())));
+			}
+		}
+		return out;
+	}
+
+	/** A qualifier's words besides storage ({@code in}, {@code out}) and {@code layout(...)}: interpolation, precision. */
+	private static String qualifierWords(@Nullable TypeQualifier qualifier) {
+		if (qualifier == null) {
+			return "";
+		}
+		StringBuilder out = new StringBuilder();
+		for (String word : print(qualifier).replaceAll("layout\\s*\\([^)]*\\)", " ").trim().split("\\s+")) {
+			if (!word.isEmpty() && !word.equals("in") && !word.equals("out") && !word.equals("varying")) {
+				out.append(word).append(' ');
+			}
+		}
+		return out.toString().trim();
+	}
+
+	/**
+	 * A geometry stage's block reads in its squashed {@code main}, as the varyings the blocks become:
+	 * {@code data_in[i].color} to {@code aeth_DATA_color[i]}, {@code data_out.color} to {@code aeth_DATA_color}. Null
+	 * when a block is read some other way (whole, or a member it does not have).
+	 */
+	private static @Nullable String cornerBlockReads(String body, Map<String, Map<String, String>> corners, Map<String, Map<String, String>> outputs) {
+		for (Map.Entry<String, Map<String, String>> block : corners.entrySet()) {
+			Matcher m = Pattern.compile("\\b" + Pattern.quote(block.getKey()) + "\\[(\\w+)]\\.(\\w+)\\b").matcher(body);
+			StringBuilder out = new StringBuilder();
+			while (m.find()) {
+				String name = block.getValue().get(m.group(2));
+				if (name == null) {
+					return null;
+				}
+				m.appendReplacement(out, Matcher.quoteReplacement(name + "[" + m.group(1) + "]"));
+			}
+			body = m.appendTail(out).toString();
+		}
+		for (Map.Entry<String, Map<String, String>> block : outputs.entrySet()) {
+			Matcher m = Pattern.compile("\\b" + Pattern.quote(block.getKey()) + "\\.(\\w+)\\b").matcher(body);
+			StringBuilder out = new StringBuilder();
+			while (m.find()) {
+				String name = block.getValue().get(m.group(1));
+				if (name == null) {
+					return null;
+				}
+				m.appendReplacement(out, Matcher.quoteReplacement(name));
+			}
+			body = m.appendTail(out).toString();
+		}
+		Set<String> instances = new HashSet<>(corners.keySet());
+		instances.addAll(outputs.keySet());
+		for (String instance : instances) {
+			if (Pattern.compile("\\b" + Pattern.quote(instance) + "\\b").matcher(body).find()) {
+				return null;
+			}
+		}
+		return body;
+	}
+
+	/** Copies from flattened varyings into the fragment stage's blocks ({@link #flattenBlockVaryings}), added once the fold is done. */
+	private final List<String> blockCopies = new ArrayList<>();
+
+	/**
+	 * For a folded geometry stage: the vertex stage's output blocks, or the fragment stage's input blocks, as plain
+	 * varyings ({@link #blockVaryings}). A block with an instance name stays for the pack's code as a struct global of that
+	 * name, copied to its varyings after the vertex stage's {@code main} or from them before the fragment stage's. Null
+	 * when done, else why not.
+	 */
+	private @Nullable String flattenBlockVaryings(PatchShaderType type, StorageType direction) {
+		List<InterfaceBlockDeclaration> flatten = new ArrayList<>();
+		for (InterfaceBlockDeclaration block : blocks(trees.get(type))) {
+			if (!has(block.getTypeQualifier(), direction) || block.getBlockName().getName().equals("gl_PerVertex")) {
+				continue;
+			}
+			if (blockVaryings(block) == null || block.getArraySpecifier() != null) {
+				return "a " + type.name().toLowerCase(Locale.ROOT) + " stage block it cannot read";
+			}
+			flatten.add(block);
+		}
+		if (flatten.isEmpty()) {
+			return null;
+		}
+		String io = direction == StorageType.OUT ? "out " : "in ";
+		stage(type, (stage, tree, root) -> {
+			for (InterfaceBlockDeclaration block : flatten) {
+				List<BlockVarying> members = Objects.requireNonNull(blockVaryings(block));
+				String instance = block.getVariableName() == null ? null : block.getVariableName().getName();
+				List<String> declarations = new ArrayList<>();
+				if (instance != null) {
+					String struct = "aeth_b_" + block.getBlockName().getName();
+					StringBuilder fields = new StringBuilder();
+					for (BlockVarying m : members) {
+						fields.append(m.type()).append(' ').append(m.member()).append("; ");
+					}
+					declarations.add("struct " + struct + " { " + fields + "};");
+					declarations.add(struct + " " + instance + ";");
+				}
+				for (BlockVarying m : members) {
+					declarations.add((m.qualifiers().isEmpty() ? "" : m.qualifiers() + " ") + io + m.type() + " " + m.name() + ";");
+					if (instance != null) {
+						if (direction == StorageType.OUT) {
+							after(stage).add(m.name() + " = " + instance + "." + m.member() + ";");
+						} else {
+							blockCopies.add(instance + "." + m.member() + " = " + m.name() + ";");
+						}
+					}
+				}
+				replaceDeclaration(tree, root, block.getAncestor(ExternalDeclaration.class), declarations.toArray(String[]::new));
+			}
+		});
+		notes.add(type.name().toLowerCase(Locale.ROOT) + ": " + flatten.size() + " varying block(s) split into varyings");
 		return null;
 	}
 

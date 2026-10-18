@@ -59,7 +59,6 @@ public enum ShaderKey {
 	SHADOW_ENTITIES_CUTOUT(ProgramId.ShadowEntities, AlphaTests.ONE_TENTH_ALPHA, FogMode.OFF, LightingModel.LIGHTMAP),
 	SHADOW_BLOCK(ProgramId.ShadowBlock, AlphaTests.ONE_TENTH_ALPHA, FogMode.OFF, LightingModel.LIGHTMAP),
 	SHADOW_BASIC(ProgramId.Shadow, AlphaTests.OFF, FogMode.OFF, LightingModel.LIGHTMAP),
-	SHADOW_TEX(ProgramId.Shadow, AlphaTests.NON_ZERO_ALPHA, FogMode.OFF, LightingModel.LIGHTMAP),
 	SHADOW_LINES(ProgramId.Shadow, AlphaTests.OFF, FogMode.OFF, LightingModel.LIGHTMAP),
 	SHADOW_LEASH(ProgramId.Shadow, AlphaTests.OFF, FogMode.OFF, LightingModel.LIGHTMAP),
 	SHADOW_LIGHTNING(ProgramId.ShadowLightning, AlphaTests.OFF, FogMode.OFF, LightingModel.FULLBRIGHT),

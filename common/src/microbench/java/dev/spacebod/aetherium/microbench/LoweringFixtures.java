@@ -542,6 +542,39 @@ final class LoweringFixtures {
 				check("geometry stage kept", r -> r.sources().containsKey(PatchShaderType.GEOMETRY)))));
 		out.add(world("desktop: pass-through geometry stage kept", WORLD_VERTEX, passThrough, passThroughFragment,
 				check("geometry stage kept", r -> r.sources().containsKey(PatchShaderType.GEOMETRY))));
+		// Varyings in blocks, the counter declared ahead of the loop, the position through a local.
+		String blockVertex = glsl("#version 330 core", "in vec3 vaPosition;", "in vec2 vaUV0;", "in vec4 vaColor;",
+				"out DATA { vec2 uv; vec4 tint; flat int id; } data_out;", "uniform mat4 modelViewMatrix;", "uniform mat4 projectionMatrix;",
+				"void main() { data_out.uv = vaUV0; data_out.tint = vaColor; data_out.id = 3;",
+				"gl_Position = projectionMatrix * modelViewMatrix * vec4(vaPosition, 1.0); }");
+		String blockFragment = glsl("#version 330 core", "in DATA { vec2 uv; vec4 tint; flat int id; } data_in;", "uniform sampler2D gtexture;",
+				"layout(location = 0) out vec4 color;", "void main() { color = texture(gtexture, data_in.uv) * data_in.tint * float(data_in.id); }");
+		java.util.function.Function<String, String> blockGeometry = between -> glsl("#version 330 core", "layout(triangles) in;",
+				"layout(triangle_strip, max_vertices = 3) out;", "in DATA { vec2 uv; vec4 tint; flat int id; } data_in[];",
+				"out DATA { vec2 uv; vec4 tint; flat int id; } data_out;",
+				"void main() { int i; for (i = 0; i < 3; i++) { vec4 vertex = gl_in[i].gl_Position; " + between + " gl_Position = vertex;",
+				"data_out.uv = data_in[i].uv; data_out.tint = data_in[i].tint; data_out.id = data_in[i].id; EmitVertex(); } EndPrimitive(); }");
+		out.add(new Fixture("metal: pass-through geometry stage with varying blocks folded", Kind.WORLD_METAL, blockVertex, blockGeometry.apply(""),
+				blockFragment, List.of(
+				check("no geometry stage; the fragment reads the vertex outputs", r -> !r.sources().containsKey(PatchShaderType.GEOMETRY)
+						&& r.location(V, "out", "aeth_DATA_uv") >= 0 && r.location(V, "out", "aeth_DATA_uv") == r.location(F, "in", "aeth_DATA_uv")
+						&& r.location(V, "out", "aeth_DATA_id") == r.location(F, "in", "aeth_DATA_id")),
+				metalTranslates())));
+		out.add(new Fixture("metal: geometry stage moving the position through its local is kept", Kind.WORLD_METAL, blockVertex,
+				blockGeometry.apply("vertex.xy += vec2(1.0);"), blockFragment, List.of(
+				check("geometry stage kept", r -> r.sources().containsKey(PatchShaderType.GEOMETRY)))));
+		out.add(new Fixture("metal: pass-through geometry stage between blocks of different names folded", Kind.WORLD_METAL,
+				glsl("#version 330 core", "in vec3 vaPosition;", "in vec2 vaUV0;", "out VS { vec2 uv; } vs;", "uniform mat4 modelViewMatrix;",
+						"uniform mat4 projectionMatrix;", "void main() { vs.uv = vaUV0; gl_Position = projectionMatrix * modelViewMatrix * vec4(vaPosition, 1.0); }"),
+				glsl("#version 330 core", "layout(triangles) in;", "layout(triangle_strip, max_vertices = 3) out;", "in VS { vec2 uv; } vs[];",
+						"out GS { vec2 uv; } gs;",
+						"void main() { for (int i = 0; i < 3; i++) { gl_Position = gl_in[i].gl_Position; gs.uv = vs[i].uv; EmitVertex(); } EndPrimitive(); }"),
+				glsl("#version 330 core", "in GS { vec2 uv; } gs;", "uniform sampler2D gtexture;", "layout(location = 0) out vec4 color;",
+						"void main() { color = texture(gtexture, gs.uv); }"),
+				List.of(
+				check("no geometry stage; the fragment reads the vertex output", r -> !r.sources().containsKey(PatchShaderType.GEOMETRY)
+						&& r.location(V, "out", "aeth_VS_uv") >= 0 && r.location(V, "out", "aeth_VS_uv") == r.location(F, "in", "aeth_VS_uv")),
+				metalTranslates())));
 		out.add(new Fixture("metal: array-of-matrices varying split per element", Kind.FULLSCREEN_METAL,
 				vertex("flat out mat2x3 coeff[2];", "coeff[0] = mat2x3(1.0); coeff[1] = mat2x3(vaPosition, vaPosition);"), null,
 				glsl("#version 400 compatibility", "flat in mat2x3 coeff[2];", "layout(location = 0) out vec4 color;",
