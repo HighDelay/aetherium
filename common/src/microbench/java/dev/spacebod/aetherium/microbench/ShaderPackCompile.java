@@ -1,6 +1,16 @@
 package dev.spacebod.aetherium.microbench;
 
 import com.google.common.collect.ImmutableList;
+import com.mojang.renderpearl.api.pipeline.ColorTargetState;
+import com.mojang.renderpearl.api.pipeline.PrimitiveTopology;
+import com.mojang.renderpearl.api.pipeline.RenderPipeline;
+import dev.spacebod.aetherium.client.gpu.PackRenderPipeline;
+import dev.spacebod.aetherium.shaders.engine.PackTargets;
+import dev.spacebod.aetherium.shaders.engine.PipelineState;
+import dev.spacebod.aetherium.shaders.gl.texture.InternalTextureFormat;
+import net.minecraft.resources.Identifier;
+import org.jspecify.annotations.Nullable;
+import dev.spacebod.aetherium.shaders.config.ShaderPackSettings;
 import dev.spacebod.aetherium.shaders.engine.CompositePass;
 import dev.spacebod.aetherium.shaders.engine.LoadTimings;
 import dev.spacebod.aetherium.shaders.engine.ComputePass;
@@ -22,16 +32,14 @@ import dev.spacebod.aetherium.shaders.shaderpack.include.ShaderPackSourceNames;
 import dev.spacebod.aetherium.shaders.shaderpack.loading.ProgramArrayId;
 import dev.spacebod.aetherium.shaders.shaderpack.loading.ProgramId;
 import dev.spacebod.aetherium.shaders.shaderpack.materialmap.NamespacedId;
+import dev.spacebod.aetherium.shaders.shaderpack.materialmap.BlockMaterialMapping;
 import dev.spacebod.aetherium.shaders.shaderpack.preprocessor.JcppProcessor;
 import dev.spacebod.aetherium.shaders.shaderpack.programs.ComputeSource;
 import dev.spacebod.aetherium.shaders.shaderpack.programs.ProgramSet;
 import dev.spacebod.aetherium.shaders.shaderpack.programs.ProgramSource;
 import dev.spacebod.aetherium.shaders.shaderpack.texture.TextureStage;
 import java.io.IOException;
-import java.net.URI;
 import java.nio.ByteBuffer;
-import java.nio.file.FileSystem;
-import java.nio.file.FileSystems;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -42,6 +50,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.TreeMap;
 import org.lwjgl.util.shaderc.Shaderc;
@@ -80,6 +89,9 @@ final class ShaderPackCompile {
 	/** Cold / warm totals over every pack ({@code AETHERIUM_TRANSFORM_CACHE=1}). */
 	private static final long[] cacheTotals = new long[6];
 	private static int cacheStages, cacheIdentical, cachePrograms, cacheHits;
+	private static int failedPrograms;
+	private static final String DIMENSION = System.getenv("AETHERIUM_DIMENSION") == null ? "overworld" : System.getenv("AETHERIUM_DIMENSION");
+	private static final boolean LOD = "1".equals(System.getenv("AETHERIUM_SHADERS_LOD"));
 
 	private ShaderPackCompile() {
 	}
@@ -102,14 +114,21 @@ final class ShaderPackCompile {
 			return;
 		}
 		TransformDiskCache.useDirectory(null);
+		System.out.println("Shader audit dimension: minecraft:" + DIMENSION + "; Distant Horizons: " + LOD);
+		failedPrograms = 0;
 		for (String pack : packs.split(";")) {
 			try {
 				runPack(Path.of(pack.trim()));
 			} catch (IOException e) {
 				System.out.println("shaders: " + pack + ": " + e);
+				failedPrograms++;
+			} catch (RuntimeException e) {
+				System.out.println("shaders: " + pack + ": " + e);
+				failedPrograms++;
 			} finally {
 				StorageBindings.reset();
 				dev.spacebod.aetherium.shaders.engine.TexturePatching.reset();
+				TransformPatcher.clearCache();
 			}
 		}
 		if (CACHE) {
@@ -117,9 +136,19 @@ final class ShaderPackCompile {
 					cacheTotals[0] / 1e9, cacheTotals[1] / 1e9, cacheTotals[2] / 1e9, cacheTotals[3] / 1e9, cachePrograms, cacheHits,
 					cacheTotals[4] / 1e9, cacheTotals[5] / 1e9, cacheIdentical, cacheStages);
 		}
+		if (failedPrograms > 0) {
+			throw new AssertionError(failedPrograms + " shader programs or packs failed the audit");
+		}
 	}
 
-	private record Program(String name, Map<String, String> sources) {
+	private record Program(String name, Map<String, String> sources, @Nullable ProgramSource original) {
+		Program(String name, Map<String, String> sources) {
+			this(name, sources, null);
+		}
+
+		Program renamed(String name) {
+			return new Program(name, sources, original);
+		}
 	}
 
 	/** One lowering of one program: its stages, their SPIR-V (null = failed) and errors. */
@@ -299,12 +328,14 @@ final class ShaderPackCompile {
 
 	private static void runPack(Path zip) throws IOException {
 		String packName = zip.getFileName().toString();
-		boolean folder = Files.isDirectory(zip);
-		try (FileSystem fs = folder ? null : FileSystems.newFileSystem(URI.create("jar:" + zip.toUri()), Map.of())) {
-			Path root = folder ? zip.resolve("shaders") : fs.getPath("shaders");
+		try (ShaderPackSettings.OpenPack opened = ShaderPackSettings.open(zip.toAbsolutePath().toString())) {
+			Path root = opened.root();
 			List<Program> programs = loadThroughEngine(zip, root);
 			if (programs == null) {
 				programs = loadRaw(root);
+			}
+			if (programs.isEmpty()) {
+				throw new IOException("no shader programs found in " + root);
 			}
 			addVariants(programs);
 			Map<String, Outcome> cold = CACHE ? new LinkedHashMap<>() : null;
@@ -331,6 +362,7 @@ final class ShaderPackCompile {
 				}
 			}
 			tally.print(packName, STRICT ? "vanilla compiler options" : "relaxed rules", programs.size());
+			failedPrograms += tally.failed.size();
 			if (CACHE) {
 				long coldWall = System.nanoTime() - wallStart;
 				LoadTimings.Snapshot afterCold = LoadTimings.snapshot();
@@ -435,7 +467,7 @@ final class ShaderPackCompile {
 
 	private static Map<PatchShaderType, String> lowerQuietly(Program program) {
 		try {
-			return lower(program.name(), program.sources());
+			return lower(program);
 		} catch (RuntimeException e) {
 			return Map.of();
 		}
@@ -472,15 +504,18 @@ final class ShaderPackCompile {
 		ShaderPack pack;
 		try {
 			// The engine adds its standard macros itself (StandardMacros); LOD macros through the property it reads.
-			if (System.getenv("AETHERIUM_SHADERS_LOD") != null) {
+			if (LOD) {
 				System.setProperty("aetherium.shaders.lod", "true");
 			}
 			pack = new ShaderPack(root, options, ImmutableList.of(), !Files.isDirectory(zip));
+			BlockMaterialMapping.createBlockStateIdMap(pack.getIdMap().getBlockProperties(), pack.getIdMap().getTagEntries());
+			BlockMaterialMapping.createBlockTypeMap(pack.getIdMap().getBlockRenderTypeMap());
 		} catch (Throwable e) {
+			failedPrograms++;
 			System.out.println("  (pack not loadable through the engine here: " + e + " at " + (e.getStackTrace().length > 0 ? e.getStackTrace()[0] + " / " + (e.getStackTrace().length > 1 ? e.getStackTrace()[1] : "") : "") + "; raw sources used, storage not configured)");
 			return null;
 		}
-		ProgramSet set = pack.getProgramSet(new NamespacedId("minecraft", "overworld"));
+		ProgramSet set = pack.getProgramSet(new NamespacedId("minecraft", DIMENSION));
 		// As the engine sets it up at pack load: raw textures renamed per stage, and what set 1 holds.
 		dev.spacebod.aetherium.shaders.engine.TexturePatching.configure(set.getPackDirectives().getTextureMap());
 		var raws = dev.spacebod.aetherium.shaders.engine.RawTextures.collect(pack);
@@ -493,7 +528,9 @@ final class ShaderPackCompile {
 		}
 		List<Program> out = new ArrayList<>();
 		for (ProgramId id : ProgramId.values()) {
-			set.get(id).ifPresent(source -> out.add(program(source)));
+			if (LOD || !id.getSourceName().startsWith("dh_")) {
+				set.get(id).ifPresent(source -> out.add(program(source)));
+			}
 		}
 		for (ProgramArrayId stage : ProgramArrayId.values()) {
 			for (ProgramSource source : set.getComposite(stage)) {
@@ -522,7 +559,7 @@ final class ShaderPackCompile {
 		source.getVertexSource().ifPresent(s -> sources.put("vsh", s));
 		source.getGeometrySource().ifPresent(s -> sources.put("gsh", s));
 		source.getFragmentSource().ifPresent(s -> sources.put("fsh", s));
-		return new Program(source.getName(), sources);
+		return new Program(source.getName(), sources, source);
 	}
 
 	private static void addComputes(List<Program> out, ComputeSource[] list) {
@@ -596,30 +633,30 @@ final class ShaderPackCompile {
 		Map<String, Program> byName = new LinkedHashMap<>();
 		programs.forEach(p -> byName.put(p.name(), p));
 		if (!byName.containsKey("gbuffers_line") && byName.containsKey("gbuffers_basic")) {
-			programs.add(new Program("gbuffers_basic@line", byName.get("gbuffers_basic").sources()));
+			programs.add(byName.get("gbuffers_basic").renamed("gbuffers_basic@line"));
 		}
 		Program terrain = byName.get("dh_terrain");
 		if (terrain != null) {
 			if (!byName.containsKey("dh_generic")) {
-				programs.add(new Program("dh_generic", terrain.sources()));
+				programs.add(terrain.renamed("dh_generic"));
 			}
 			if (!byName.containsKey("dh_shadow")) {
-				programs.add(new Program("dh_shadow", terrain.sources()));
+				programs.add(terrain.renamed("dh_shadow"));
 			}
 		}
 		if (byName.containsKey("shadow")) {
-			programs.add(new Program("shadow@entity", byName.get("shadow").sources()));
+			programs.add(byName.get("shadow").renamed("shadow@entity"));
 		}
 		// Block-entity geometry (chests, signs, banners) draws with the block programs in the entity format.
 		for (String block : List.of("gbuffers_block", "gbuffers_block_translucent")) {
 			if (byName.containsKey(block)) {
-				programs.add(new Program(block + "@entity", byName.get(block).sources()));
+				programs.add(byName.get(block).renamed(block + "@entity"));
 			}
 		}
 		// The glint drawn over enchanted items, in the item formats (UV3 carries the glint coordinate on special items).
 		if (byName.containsKey("gbuffers_armor_glint")) {
-			programs.add(new Program("gbuffers_armor_glint@item", byName.get("gbuffers_armor_glint").sources()));
-			programs.add(new Program("gbuffers_armor_glint@item_special", byName.get("gbuffers_armor_glint").sources()));
+			programs.add(byName.get("gbuffers_armor_glint").renamed("gbuffers_armor_glint@item"));
+			programs.add(byName.get("gbuffers_armor_glint").renamed("gbuffers_armor_glint@item_special"));
 		}
 	}
 
@@ -628,7 +665,8 @@ final class ShaderPackCompile {
 	private static Outcome build(Program program) {
 		Map<PatchShaderType, String> stages;
 		try {
-			stages = lower(program.name(), program.sources());
+			stages = lower(program);
+			validatePipeline(program);
 		} catch (RuntimeException e) {
 			String message = e.getMessage() == null ? e.toString() : e.getMessage();
 			Throwable cause = e.getCause();
@@ -663,13 +701,25 @@ final class ShaderPackCompile {
 				}
 			});
 		}
+		if (errors.isEmpty() && spirv.containsKey(PatchShaderType.FRAGMENT)) {
+			Map<PatchShaderType, List<String>> reflected = new EnumMap<>(PatchShaderType.class);
+			spirv.forEach((type, code) -> reflected.put(type, SpirvInterface.reflect(code, false)));
+			String mismatch = SpirvInterface.interpolationMismatch(reflected);
+			if (mismatch != null) {
+				errors.put(PatchShaderType.FRAGMENT, mismatch);
+				rawErrors.put(program.name() + PatchShaderType.FRAGMENT, mismatch);
+				spirv.remove(PatchShaderType.FRAGMENT);
+			}
+		}
 		return new Outcome(present, spirv, errors, null);
 	}
 
 	private static final Map<String, String> rawErrors = new HashMap<>();
 
 	/** The stages exactly as the engine hands them to vanilla's compiler, for the current lowering mode. */
-	private static Map<PatchShaderType, String> lower(String name, Map<String, String> src) {
+	private static Map<PatchShaderType, String> lower(Program program) {
+		String name = program.name();
+		Map<String, String> src = program.sources();
 		if (src.containsKey("csh")) {
 			ComputePass.Lowered compute = ComputePass.lower(name, src.get("csh"), stageOf(name));
 			return compute == null ? null : Map.of(PatchShaderType.COMPUTE, compute.glsl());
@@ -677,7 +727,7 @@ final class ShaderPackCompile {
 		if (!src.containsKey("vsh") || !src.containsKey("fsh")) {
 			return null;
 		}
-		int[] buffers = {0, 1, 2, 3, 4, 5, 6, 7};
+		int[] buffers = program.original() == null ? new int[]{0, 1, 2, 3, 4, 5, 6, 7} : program.original().getDirectives().getDrawBuffers();
 		if (name.startsWith("dh_")) {
 			if (name.startsWith("dh_generic")) {
 				return WorldInterface.prepareLodGeneric(name, src.get("vsh"), src.get("fsh"), buffers, buffers).stages();
@@ -718,6 +768,30 @@ final class ShaderPackCompile {
 		out.put(PatchShaderType.VERTEX, composite.vertex());
 		out.put(PatchShaderType.FRAGMENT, composite.fragment());
 		return out;
+	}
+
+	/** Validate the real directives and target formats through the same pipeline constructor used in game. */
+	private static void validatePipeline(Program program) {
+		ProgramSource source = program.original();
+		if (source == null || program.sources().containsKey("csh")) {
+			return;
+		}
+		int[] written = source.getDirectives().getDrawBuffers();
+		var directives = source.getParent().getPackDirectives();
+		boolean shadow = program.name().startsWith("shadow");
+		ColorTargetState[] targets = PipelineState.colorTargets(written, target -> {
+			if (shadow) {
+				var settings = directives.getShadowDirectives().getColorSamplingSettings().get(target);
+				return PackTargets.gpuFormat(settings == null ? InternalTextureFormat.RGBA : settings.getFormat());
+			}
+			var settings = directives.getRenderTargetDirectives().getRenderTargetSettings().get(target);
+			return PackTargets.gpuFormat(settings == null ? InternalTextureFormat.RGBA : settings.getInternalFormat());
+		}, written, source.getDirectives(), Optional.empty(), ColorTargetState.WRITE_ALL);
+		Identifier id = Identifier.fromNamespaceAndPath("aetherium_shaders", "audit/pipeline");
+		RenderPipeline.Builder builder = RenderPipeline.builder().withLocation(id).withVertexShader(id).withFragmentShader(id)
+				.withPrimitiveTopology(PrimitiveTopology.TRIANGLES);
+		builder.withVertexBinding(0, isWorld(program.name()) ? formatFor(program.name()) : com.mojang.blaze3d.vertex.DefaultVertexFormat.POSITION_TEX);
+		PackRenderPipeline.build(builder, targets);
 	}
 
 	private static boolean isWorld(String name) {
@@ -813,6 +887,23 @@ final class ShaderPackCompile {
 
 	/** Compiles one stage with vanilla GlslCompiler's options; the SPIR-V (a heap copy), or null with {@link #lastRawError} set. */
 	private static ByteBuffer compile(String name, String source, PatchShaderType type, boolean debugInfo) {
+		if (type == PatchShaderType.COMPUTE && !debugInfo) {
+			long started = System.nanoTime();
+			try {
+				ByteBuffer nativeCode = dev.spacebod.aetherium.client.gpu.ShaderCompiler.compute(name, source);
+				try {
+					ByteBuffer code = ByteBuffer.allocateDirect(nativeCode.remaining()).order(java.nio.ByteOrder.nativeOrder());
+					return code.put(nativeCode).flip();
+				} finally {
+					org.lwjgl.system.MemoryUtil.memFree(nativeCode);
+				}
+			} catch (RuntimeException e) {
+				lastRawError = e.getMessage();
+				return null;
+			} finally {
+				compileNanos += System.nanoTime() - started;
+			}
+		}
 		int kind = switch (type) {
 			case VERTEX -> Shaderc.shaderc_vertex_shader;
 			case FRAGMENT -> Shaderc.shaderc_fragment_shader;

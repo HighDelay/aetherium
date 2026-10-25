@@ -5,6 +5,31 @@ and versions follow [Semantic Versioning](https://semver.org).
 
 ## [Unreleased]
 
+### Fixed
+
+- Shader interface blocks are split into individual varyings before Minecraft builds Vulkan pipelines, preventing
+  compositing and world programs in packs such as Emanrux and Eclipse from failing with a struct interface error.
+- Unsupported optional shader-pack features no longer activate shader stages, including tessellation.
+- Custom uniform expressions accept the GLSL `fract()` function.
+- Different blend functions per colour attachment are preserved on Vulkan devices with independent blending,
+  allowing Iteration's water program to build.
+- Texture samplers are renamed according to local scope, including reads in a local variable's initializer;
+  Iteration's water, shadow and weather shaders no longer fail when their sampled colour is also named `tex`.
+- Geometry stage inputs and outputs use separate location ranges, avoiding excessive geometry output locations
+  and device loss with SEUS PTGI HRR 3. Integer varyings carry matching flat interpolation in every stage.
+- Empty fragment placeholders no longer reserve a colour target, preserving all eight real world targets in
+  Alpha Piscium and Bliss. Inactive Distant Horizons programs do not reserve world targets.
+- Custom image declarations accept repeated whitespace and up to 32 images; Derivative's original release now
+  retains all of its image bindings. Mixed-case block IDs and non-English property comments no longer abort or
+  truncate pack material maps.
+- Compute uniform copies respect the device's offset alignment; pack buffers support indirect dispatch and
+  1D lookup textures keep their Vulkan dimension. Supported NVIDIA subgroup partition operations are enabled.
+- Compatible target image formats use views of the same storage, including Alpha Piscium's RGBA8 clears of
+  R32UI targets. Invalid vector constants emitted by the shader optimizer trigger an unoptimized recompile.
+- Integer and boolean uniform providers convert to float when a pack declares a floating-point flag.
+- Custom uniform expressions support vector/scalar multiplication in either order, restoring MakeUp's TAA correction.
+- Iteration's End shaders accept matrix transpose and inverse expressions in their global initializers.
+
 ## [0.1.1] - 2026-10-18
 
 A patch release for Photon: mining a block shows its cracks again, and enchanted items show a proper glint.

@@ -87,6 +87,9 @@ public final class BlockProgramUniforms implements DynamicLocationalUniformHolde
 			AetheriumShaders.logger.warn("[{}] Duplicate uniform: {} {}", programName, type.toString().toLowerCase(), name);
 			return OptionalInt.empty();
 		}
+		if (type == UniformType.INT && member.type().equals("float")) {
+			return OptionalInt.of(UniformBlockBuffer.intToFloatLocation(member.offset()));
+		}
 		if (!compatible(type, member.type())) {
 			AetheriumShaders.logger.error("[{}] Wrong uniform type for {}: provided {} but the program declares {}. Disabling that uniform.",
 					programName, name, type, member.type());
@@ -189,7 +192,8 @@ public final class BlockProgramUniforms implements DynamicLocationalUniformHolde
 	}
 
 	private static long currentTick() {
-		return Minecraft.getInstance().level == null ? 0L : Minecraft.getInstance().level.getGameTime();
+		Minecraft mc = Minecraft.getInstance();
+		return mc == null || mc.level == null ? 0L : mc.level.getGameTime();
 	}
 
 	private static boolean compatible(UniformType provided, String glslType) {

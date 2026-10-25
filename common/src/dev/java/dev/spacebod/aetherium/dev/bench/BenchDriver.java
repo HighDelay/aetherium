@@ -126,6 +126,7 @@ public final class BenchDriver {
 	private static final int PLAY_PACK_SECONDS = System.getenv("AETHERIUM_PLAY_PACK_SECONDS") == null ? 12
 			: Integer.parseInt(System.getenv("AETHERIUM_PLAY_PACK_SECONDS"));
 	private int playPacksApplied;
+	private PackSmokeAudit packSmokeAudit;
 
 	private BenchDriver(BenchRequest request) {
 		this.request = request;
@@ -336,6 +337,10 @@ public final class BenchDriver {
 					}
 				}
 				case PLAY -> {
+					if (packSmokeAudit != null) {
+						packSmokeAudit.tick(mc);
+						break;
+					}
 					if (docShots != null) {
 						docShots.tick(mc, seconds(now - playStart));
 					}
@@ -468,6 +473,9 @@ public final class BenchDriver {
 	 * ({@code screenshots/aetherium-play.png}) so a visual check does not need the player.
 	 */
 	private void startPlay(Minecraft mc, long now) {
+		if (System.getenv("AETHERIUM_PLAY_AUDIT") != null) {
+			packSmokeAudit = new PackSmokeAudit(PLAY_PACKS, request.saveName());
+		}
 		IntegratedServer server = mc.getSingleplayerServer();
 		if (server != null) {
 			String[] commands = {

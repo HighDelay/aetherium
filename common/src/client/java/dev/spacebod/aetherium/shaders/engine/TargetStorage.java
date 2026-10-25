@@ -65,6 +65,11 @@ public final class TargetStorage {
 		return supports(format) ? vkUsage | VK10.VK_IMAGE_USAGE_STORAGE_BIT : vkUsage;
 	}
 
+	/** Pack targets can be accessed through same-size image views of another format. */
+	public static int imageFlags(int flags) {
+		return CREATING.get() ? flags | VK10.VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT : flags;
+	}
+
 	private static boolean supports(GpuFormat format) {
 		return SUPPORTED.computeIfAbsent(format, f -> {
 			var device = VulkanAccess.device();

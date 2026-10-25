@@ -617,8 +617,8 @@ public final class PackTargets implements AutoCloseable {
 
 	/** A size x size RGBA8 texture filled with {@code abgr} (R in the low byte). */
 	private static GpuTexture solid(String name, int abgr, int size) {
-		GpuTexture texture = RenderSystem.getDevice().createTexture(() -> "Aetherium Shaders " + name,
-				GpuTexture.USAGE_TEXTURE_BINDING | GpuTexture.USAGE_COPY_DST, GpuFormat.RGBA8_UNORM, size, size, 1, 1);
+		GpuTexture texture = TargetStorage.create(() -> RenderSystem.getDevice().createTexture(() -> "Aetherium Shaders " + name,
+				GpuTexture.USAGE_TEXTURE_BINDING | GpuTexture.USAGE_COPY_DST, GpuFormat.RGBA8_UNORM, size, size, 1, 1));
 		ByteBuffer pixels = MemoryUtil.memAlloc(4 * size * size);
 		try {
 			for (int i = 0; i < size * size; i++) {

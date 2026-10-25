@@ -44,6 +44,45 @@ python benchmarks\tools\report.py benchmarks\results\2026-09-27_1500_baseline be
 Windows Update show up directly in the numbers. Keep the power plan fixed (it is recorded) and the game
 window unobstructed.
 
+## Shader-pack compatibility checks
+
+The CPU harness loads the actual pack (including nested zip roots, options and material maps), lowers its programs,
+builds their attachment/blend descriptions, and compiles the stages to Vulkan SPIR-V. Compilation or interface
+failures make the task fail. Use absolute paths separated by semicolons:
+
+```powershell
+$shaderpacks = 'C:\path\to\shaderpacks'
+$env:AETHERIUM_PACKS = (Get-ChildItem -LiteralPath $shaderpacks -Filter '*.zip' | Sort-Object Name).FullName -join ';'
+$env:AETHERIUM_PACK_OPTIONS = 'file' # use each adjacent .zip.txt; omit to use defaults
+foreach ($dimension in 'overworld', 'the_nether', 'the_end') {
+    $env:AETHERIUM_DIMENSION = $dimension
+    .\gradlew.bat :common:microbench '-Ponly=shaders' --console=plain
+    if ($LASTEXITCODE -ne 0) { throw "Shader compilation failed in $dimension" }
+}
+.\gradlew.bat :common:microbench '-Ponly=lowering' --console=plain
+```
+
+Only enable `AETHERIUM_SHADERS_LOD=1` when also checking the Distant Horizons programs. Ordinary runs exclude them.
+Shader failures are dumped under `common/build/shader-harness/`.
+
+Native rendering requires a separate check. Copy the pack zips and their options into `fabric/run/shaderpacks/`,
+then prepare a dedicated save using a benchmark `prepare` request with `saveName` set to `aetherium-shader-audit`.
+For a subsequent `play` request using that save, set:
+
+```powershell
+$env:AETHERIUM_PLAY_PACKS = 'off;' + ((Get-ChildItem -LiteralPath $shaderpacks -Filter '*.zip' | Sort-Object Name).Name -join ';')
+$env:AETHERIUM_PLAY_AUDIT = '1'
+$env:AETHERIUM_PLAY_AUDIT_REPORT = "$PWD\build\shaderpack-audit\runtime.json"
+.\gradlew.bat :fabric:runClient '-PclientArgs=--graphicsBackend vulkan --width 960 --height 540 --vulkanValidation --renderDebugLabels'
+```
+
+This builds a pool scene in the dedicated save, loads each pack, waits for loading to finish, and captures day, night
+and underwater views. It writes results after each pack and disables shaders before quitting. The audit refuses saves
+whose names do not start with `aetherium-shader-audit`. Vulkan validation layers must be installed or supplied through
+`VK_LAYER_PATH` for API validation; otherwise Minecraft logs that they are unavailable. Inspect both the captures and
+logs: a `rendered` result confirms loading and capture, while a skipped shader or validation failure can still be logged.
+These are smoke tests at the selected options, rather than visual comparison against a reference OpenGL renderer.
+
 ## What one run does
 
 1. `run.ps1` copies the golden world into `fabric/run/saves/`, writes `fabric/run/config/aetherium.json`
