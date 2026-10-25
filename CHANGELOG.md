@@ -29,6 +29,12 @@ and versions follow [Semantic Versioning](https://semver.org).
 - Integer and boolean uniform providers convert to float when a pack declares a floating-point flag.
 - Custom uniform expressions support vector/scalar multiplication in either order, restoring MakeUp's TAA correction.
 - Iteration's End shaders accept matrix transpose and inverse expressions in their global initializers.
+- Compute shaders are included when checking which depth textures a pack reads. Opaque shadow and no-hand depth
+  copies are no longer skipped for compute-only readers, restoring sunlight and light shafts in Alpha Piscium.
+- Vulkan pass barriers include geometry, tessellation and early depth-test accesses, keeping shader storage and
+  depth writes visible to later passes.
+- Shadow programs without a draw-buffer directive write both shadowcolor0 and shadowcolor1, matching Iris's
+  default and retaining the second output used by SEUS's voxel lighting.
 
 ## [0.1.1] - 2026-10-18
 

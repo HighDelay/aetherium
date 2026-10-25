@@ -119,9 +119,11 @@ final class LoweringFixtures {
 		directiveScans();
 		pipelineStates();
 		materialMaps();
+		computeSamplerUsage();
 		propertyComments();
 		booleanUniforms();
 		fragmentOutputScan();
+		defaultShadowBuffers();
 		customExpressions();
 		if (failed != 0) {
 			throw new AssertionError(failed + " lowering fixture(s) failed");
@@ -150,6 +152,44 @@ final class LoweringFixtures {
 			throw new AssertionError("block layer IDs did not use the same tolerant lookup");
 		}
 		System.out.println("material maps: mixed-case IDs resolved; invalid entries skipped; valid entries retained");
+	}
+
+	/** Compute-only readers must keep their depth copies, even without a fragment program reading the same map. */
+	private static void computeSamplerUsage() {
+		var files = Map.of(
+				"setup7.csh", "uniform sampler2D setupOnly;",
+				"shadow_a.csh", "uniform sampler2D shadowOnly;",
+				"final_a.csh", "uniform sampler2D depthtex2;",
+				"begin3_a.csh", "uniform sampler2D beginOnly;",
+				"prepare4_a.csh", "uniform sampler2D prepareOnly;",
+				"shadowcomp5_a.csh", "uniform sampler2D shadowcompOnly;",
+				"deferred6_a.csh", "uniform sampler2D deferredOnly;",
+				"composite7_a.csh", "uniform sampler2DShadow shadowtex1HW;");
+		try {
+			var directory = java.nio.file.Files.createTempDirectory("aetherium-compute-usage-");
+			try {
+				for (var file : files.entrySet()) {
+					java.nio.file.Files.writeString(directory.resolve(file.getKey()),
+							"#version 430\nlayout(local_size_x=1) in;\n" + file.getValue() + "\nvoid main() {}\n");
+				}
+				var pack = new dev.spacebod.aetherium.shaders.shaderpack.ShaderPack(directory,
+						com.google.common.collect.ImmutableList.of(), false);
+				var usage = dev.spacebod.aetherium.shaders.engine.SamplerUsage.of(pack.getProgramSet(
+						dev.spacebod.aetherium.shaders.shaderpack.DimensionId.OVERWORLD));
+				for (String name : List.of("setupOnly", "shadowOnly", "depthtex2", "beginOnly", "prepareOnly", "shadowcompOnly", "deferredOnly", "shadowtex1HW")) {
+					if (!usage.declares(name)) throw new AssertionError("compute-only sampler was missed: " + name);
+				}
+				if (!usage.samplesOpaqueShadowDepth() || !usage.samplesDepth(dev.spacebod.aetherium.shaders.engine.DepthTargets.NO_HAND)) {
+					throw new AssertionError("compute-only readers lost their opaque shadow or no-hand depth copy");
+				}
+			} finally {
+				for (String file : files.keySet()) java.nio.file.Files.deleteIfExists(directory.resolve(file));
+				java.nio.file.Files.delete(directory);
+			}
+		} catch (java.io.IOException e) {
+			throw new AssertionError("cannot prepare compute sampler fixture", e);
+		}
+		System.out.println("sampler usage: compute-only readers retained across setup, shadow, final and all frame stages");
 	}
 
 	private static void propertyComments() {
@@ -199,6 +239,29 @@ final class LoweringFixtures {
 				throw new AssertionError("real fragment output lost its default target");
 		}
 		System.out.println("fragment outputs: empty placeholders use no targets; legacy and modern colour outputs kept");
+	}
+
+	/** SEUS writes shadowcolor1 without declaring DRAWBUFFERS; shadow defaults differ from world/full-screen defaults. */
+	private static void defaultShadowBuffers() {
+		String fragment = "void main() { gl_FragData[0] = vec4(1); gl_FragData[1] = vec4(0.5); }";
+		for (String name : List.of("shadow", "shadow_solid", "shadow_cutout", "shadow_water", "shadow_entities", "dh_shadow",
+				"gbuffers_terrain", "composite", "shadowcomp")) {
+			boolean shadow = List.of("shadow", "shadow_solid", "shadow_cutout", "shadow_water", "shadow_entities", "dh_shadow").contains(name);
+			for (int variant = 0; variant < 3; variant++) {
+				String text = switch (variant) {
+					case 1 -> "/* DRAWBUFFERS:10 */\n" + fragment;
+					case 2 -> "void main() { discard; }";
+					default -> fragment;
+				};
+				int[] expected = variant == 1 ? new int[]{1, 0} : variant == 2 ? new int[0] : shadow ? new int[]{0, 1} : new int[]{0};
+				var source = new dev.spacebod.aetherium.shaders.shaderpack.programs.ProgramSource(name,
+						"void main() { gl_Position = vec4(0); }", null, null, null, text, null, null, null);
+				if (!java.util.Arrays.equals(expected, source.getDirectives().getDrawBuffers())) {
+					throw new AssertionError(name + " lost its " + (variant == 1 ? "explicit" : "default") + " colour targets");
+				}
+			}
+		}
+		System.out.println("shadow outputs: implicit shadowcolor0/1 retained; explicit targets and empty placeholders preserved");
 	}
 
 	private static void customExpressions() {

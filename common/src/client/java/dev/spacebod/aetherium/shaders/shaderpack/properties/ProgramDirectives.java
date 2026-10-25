@@ -55,7 +55,8 @@ public class ProgramDirectives {
 	public ProgramDirectives(ProgramSource source, ShaderProperties properties, Set<Integer> supportedRenderTargets,
 							 @Nullable BlendModeOverride defaultBlendOverride) {
 		// DRAWBUFFERS/RENDERTARGETS are only read from the fragment shader; whichever appears last wins.
-		// Without either, /* DRAWBUFFERS:0 */ is assumed. SEUS v08/v10 need 01234567, but that breaks TAA in
+		// Without either, world/full-screen programs assume 0 and shadow programs assume 01, as in Iris.
+		// SEUS v08/v10 need 01234567 for world programs, but that breaks TAA in
 		// Sildur's Vibrant Shaders (gbuffers_skybasic has no directive and would write garbage to colortex7).
 		Optional<CommentDirective> optionalDrawbuffersDirective = findDrawbuffersDirective(source.getFragmentSource());
 		Optional<CommentDirective> optionalRendertargetsDirective = findRendertargetsDirective(source.getFragmentSource());
@@ -73,7 +74,12 @@ public class ProgramDirectives {
 			unknownDrawBuffers = true;
 			// Empty and discard-only placeholders have no colour output. A phantom colortex0 here can push a pack
 			// with eight real targets (Alpha Piscium, Bliss) over the device's attachment limit and drop a real one.
-			return hasFragmentOutput(source.getFragmentSource().orElse("")) ? new int[]{0} : new int[0];
+			if (!hasFragmentOutput(source.getFragmentSource().orElse(""))) {
+				return new int[0];
+			}
+			String name = source.getName();
+			boolean shadow = name.equals("shadow") || name.startsWith("shadow_") || name.equals("dh_shadow");
+			return shadow ? new int[]{0, 1} : new int[]{0};
 		});
 
 		if (properties != null) {
