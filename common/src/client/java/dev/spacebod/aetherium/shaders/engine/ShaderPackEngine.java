@@ -946,10 +946,11 @@ public final class ShaderPackEngine implements ShadowFrame.Passes {
 
 	/** Instance field: INSTANCE is built before later static initialisers run. */
 	private final int addressModes = AddressMode.values().length;
-	/** Nearest-filtered albedo samplers, indexed by (address mode U, address mode V). */
-	private final @Nullable GpuSampler[] albedoSamplers = new GpuSampler[addressModes * addressModes];
-	/** Albedo samplers replaced after an anisotropy change; still possibly in flight, closed at teardown. */
-	private final List<GpuSampler> retiredSamplers = new ArrayList<>();
+	/**
+	 * Nearest-filtered albedo samplers, indexed by anisotropy then (address mode U, address mode V). Terrain and entity
+	 * draws alternate anisotropy values within a frame: keep both, rather than retiring a sampler on each draw.
+	 */
+	private final Map<Integer, @Nullable GpuSampler[]> albedoSamplers = new HashMap<>();
 
 	/**
 	 * The sampler for the albedo ({@code Sampler0}) inside a gbuffer pass. Vanilla 26.3 binds the block atlas with a
@@ -967,13 +968,11 @@ public final class ShaderPackEngine implements ShadowFrame.Passes {
 		int anisotropy = WorldRenderingSettings.INSTANCE.breaksAnisotropy() ? 1
 				: Math.max(1, vanilla.getMaxAnisotropy());
 		int slot = u.ordinal() * addressModes + v.ordinal();
-		GpuSampler sampler = albedoSamplers[slot];
-		if (sampler == null || sampler.getMaxAnisotropy() != anisotropy) {
-			if (sampler != null) {
-				retiredSamplers.add(sampler);
-			}
+		GpuSampler[] samplers = albedoSamplers.computeIfAbsent(anisotropy, unused -> new GpuSampler[addressModes * addressModes]);
+		GpuSampler sampler = samplers[slot];
+		if (sampler == null) {
 			sampler = RenderSystem.getDevice().createSampler(u, v, FilterMode.NEAREST, FilterMode.NEAREST, anisotropy, OptionalDouble.empty());
-			albedoSamplers[slot] = sampler;
+			samplers[slot] = sampler;
 		}
 		return sampler;
 	}
@@ -2682,14 +2681,14 @@ public final class ShaderPackEngine implements ShadowFrame.Passes {
 		compiledToVanilla.clear();
 		shadowFrame = null;
 		ShadowRenderer.unpinShadowAngle();
-		for (int i = 0; i < albedoSamplers.length; i++) {
-			if (albedoSamplers[i] != null) {
-				albedoSamplers[i].close();
-				albedoSamplers[i] = null;
+		for (GpuSampler[] samplers : albedoSamplers.values()) {
+			for (GpuSampler sampler : samplers) {
+				if (sampler != null) {
+					sampler.close();
+				}
 			}
 		}
-		retiredSamplers.forEach(GpuSampler::close);
-		retiredSamplers.clear();
+		albedoSamplers.clear();
 		if (plan != null) {
 			plan.close();
 			plan = null;

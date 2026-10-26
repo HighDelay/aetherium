@@ -7,6 +7,8 @@ and versions follow [Semantic Versioning](https://semver.org).
 
 ### Fixed
 
+- Alternating anisotropic terrain and ordinary entity draws reuse their albedo samplers instead of accumulating
+  retired Vulkan samplers until a pack unloads, preventing sampler exhaustion with anisotropic texture filtering.
 - Copies of vanilla render pipelines made by cosmetic mods retain their shader-pack entity and shadow programs,
   preventing Essential's translucent cosmetics from falling back to unencoded vanilla output.
 - Polytone uses vanilla leads while a shader pack is active, matching its Iris fallback and preventing rainbow leads

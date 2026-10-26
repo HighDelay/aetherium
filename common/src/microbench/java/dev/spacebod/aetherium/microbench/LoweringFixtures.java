@@ -126,6 +126,7 @@ final class LoweringFixtures {
 		fragmentOutputScan();
 		defaultShadowBuffers();
 		customExpressions();
+		AlbedoSamplerFixtures.run();
 		if (failed != 0) {
 			throw new AssertionError(failed + " lowering fixture(s) failed");
 		}
