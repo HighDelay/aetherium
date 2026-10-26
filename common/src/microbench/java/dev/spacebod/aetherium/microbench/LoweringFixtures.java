@@ -109,6 +109,7 @@ final class LoweringFixtures {
 		StorageBindings.reset();
 		System.out.printf(Locale.ROOT, "%nlowering fixtures: %d passed, %d failed%n", passed, failed);
 		directiveScans();
+		AlbedoSamplerFixtures.run();
 	}
 
 	/** The text scans that stay text (they run before parsing): uniform declarations and comment directives. */
