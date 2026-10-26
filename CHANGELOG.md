@@ -7,6 +7,10 @@ and versions follow [Semantic Versioning](https://semver.org).
 
 ### Fixed
 
+- Copies of vanilla render pipelines made by cosmetic mods retain their shader-pack entity and shadow programs,
+  preventing Essential's translucent cosmetics from falling back to unencoded vanilla output.
+- Polytone uses vanilla leads while a shader pack is active, matching its Iris fallback and preventing rainbow leads
+  with packs that encode their material buffers. Its textured leads still work without a shader pack.
 - Shader interface blocks are split into individual varyings before Minecraft builds Vulkan pipelines, preventing
   compositing and world programs in packs such as Emanrux and Eclipse from failing with a struct interface error.
 - Unsupported optional shader-pack features no longer activate shader stages, including tessellation.
