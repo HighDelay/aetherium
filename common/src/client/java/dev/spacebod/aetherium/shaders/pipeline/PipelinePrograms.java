@@ -208,6 +208,13 @@ public final class PipelinePrograms {
 	/** The pack program for a vanilla pipeline in the main (gbuffers) pass, or null (draw it with its vanilla shader). */
 	public static @Nullable ShaderKey main(RenderPipeline pipeline, Context context) {
 		Choice choice = MAIN.get(pipeline);
+		if (choice == null) {
+			RenderPipeline original = originalCopy(pipeline, MAIN_ORDER);
+			if (original != null) {
+				choice = MAIN.get(original);
+				MAIN.put(pipeline, choice);
+			}
+		}
 		return choice == null ? LodCompat.key(pipeline, false) : choice.choose(context);
 	}
 
@@ -217,7 +224,34 @@ public final class PipelinePrograms {
 	 */
 	public static @Nullable ShaderKey shadow(RenderPipeline pipeline, Context context) {
 		ShaderKey key = SHADOW.get(pipeline);
+		if (key == null) {
+			RenderPipeline original = originalCopy(pipeline, SHADOW_ORDER);
+			if (original != null) {
+				key = SHADOW.get(original);
+				SHADOW.put(pipeline, key);
+			}
+		}
 		return key != null ? key : LodCompat.key(pipeline, true);
+	}
+
+	/**
+	 * Cosmetic mods copy vanilla pipelines to change culling, blending or depth state. Keep their shader choice when
+	 * the location and complete shader interface still match; WorldProgram builds with the copy's own render state.
+	 */
+	private static @Nullable RenderPipeline originalCopy(RenderPipeline pipeline, List<RenderPipeline> originals) {
+		for (RenderPipeline original : originals) {
+			if (pipeline.getLocation().equals(original.getLocation())
+					&& pipeline.getShaders().equals(original.getShaders())
+					&& pipeline.getShaderDefines().equals(original.getShaderDefines())
+					&& pipeline.getVertexFormatBindings().equals(original.getVertexFormatBindings())
+					&& pipeline.getPrimitiveTopology() == original.getPrimitiveTopology()
+					&& pipeline.pushConstantSize() == original.pushConstantSize()
+					&& pipeline.getBindGroupLayouts().size() == original.getBindGroupLayouts().size()
+					&& pipeline.getBindGroupLayouts().containsAll(original.getBindGroupLayouts())) {
+				return original;
+			}
+		}
+		return null;
 	}
 
 	private static ShaderKey cutout(Context c) {
