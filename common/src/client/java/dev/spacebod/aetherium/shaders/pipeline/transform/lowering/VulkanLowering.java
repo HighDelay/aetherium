@@ -35,12 +35,15 @@ import io.github.douira.glsl_transformer.ast.node.expression.unary.DecrementPost
 import io.github.douira.glsl_transformer.ast.node.expression.unary.DecrementPrefixExpression;
 import io.github.douira.glsl_transformer.ast.node.expression.unary.IncrementPostfixExpression;
 import io.github.douira.glsl_transformer.ast.node.expression.unary.IncrementPrefixExpression;
+import io.github.douira.glsl_transformer.ast.node.expression.unary.LengthAccessExpression;
 import io.github.douira.glsl_transformer.ast.node.expression.unary.MemberAccessExpression;
 import io.github.douira.glsl_transformer.ast.node.external_declaration.DeclarationExternalDeclaration;
 import io.github.douira.glsl_transformer.ast.node.external_declaration.ExtensionDirective;
 import io.github.douira.glsl_transformer.ast.node.external_declaration.ExternalDeclaration;
 import io.github.douira.glsl_transformer.ast.node.external_declaration.FunctionDefinition;
 import io.github.douira.glsl_transformer.ast.node.statement.terminal.ExpressionStatement;
+import io.github.douira.glsl_transformer.ast.node.statement.CompoundStatement;
+import io.github.douira.glsl_transformer.ast.node.statement.loop.LoopStatement;
 import io.github.douira.glsl_transformer.ast.node.type.initializer.ExpressionInitializer;
 import io.github.douira.glsl_transformer.ast.node.type.initializer.Initializer;
 import io.github.douira.glsl_transformer.ast.node.type.qualifier.InterpolationQualifier;
@@ -65,6 +68,7 @@ import io.github.douira.glsl_transformer.ast.print.ASTPrinter;
 import io.github.douira.glsl_transformer.ast.query.Root;
 import io.github.douira.glsl_transformer.ast.transform.ASTInjectionPoint;
 import io.github.douira.glsl_transformer.ast.transform.ASTParser;
+import io.github.douira.glsl_transformer.ast.traversal.ASTVoidVisitor;
 import io.github.douira.glsl_transformer.util.Type;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
@@ -220,6 +224,7 @@ public final class VulkanLowering {
 			each(this::sharedVec3);
 		}
 		if (p.kind() != LoweringParameters.Kind.COMPUTE) {
+			interfaceBlockVaryings();
 			structVaryings();
 			if (p.platform().metal()) {
 				matrixArrayVaryings();
@@ -265,6 +270,7 @@ public final class VulkanLowering {
 			if (trees.containsKey(PatchShaderType.VERTEX) && trees.containsKey(PatchShaderType.FRAGMENT) && !trees.containsKey(PatchShaderType.TESS_EVAL)) {
 				missingVaryings();
 			}
+			flatIntegerVaryings();
 			locations();
 			if (p.outputAttachments() != null) {
 				stage(PatchShaderType.FRAGMENT, (type, tree, root) -> remapOutputs(tree, root));
@@ -480,11 +486,16 @@ public final class VulkanLowering {
 	}
 
 	private static int arrayLength(@Nullable ArraySpecifier spec) {
-		if (spec == null || spec.getDimensions().isEmpty()) {
+		return arrayLength(spec, 0);
+	}
+
+	/** Ignore the outer per-vertex dimension of geometry/tessellation interface arrays when counting locations. */
+	private static int arrayLength(@Nullable ArraySpecifier spec, int skip) {
+		if (spec == null || spec.getDimensions().size() <= skip) {
 			return 0;
 		}
 		int length = 1;
-		for (Expression dimension : spec.getDimensions()) {
+		for (Expression dimension : spec.getDimensions().subList(skip, spec.getDimensions().size())) {
 			if (dimension instanceof LiteralExpression literal && literal.isInteger()) {
 				length *= (int) literal.getInteger();
 			} else {
@@ -1257,6 +1268,109 @@ public final class VulkanLowering {
 				|| parent instanceof StructSpecifier;
 	}
 
+	// ------------------------------------------------------------------ interface block varyings
+
+	/**
+	 * Vanilla's pipeline builder cannot reflect a struct-valued stage input/output, including GLSL interface blocks.
+	 * Split each block into ordinary varyings and rewrite its member accesses, keeping interpolation qualifiers and
+	 * array indices (geometry inputs are arrays of vertices). Names use the producing stage and block name, so the two
+	 * stages match even with different instance names, and a geometry stage can read and write the same block type.
+	 */
+	private void interfaceBlockVaryings() {
+		each((type, tree, root) -> {
+			Map<String, Integer> structs = structSlots(tree);
+			for (InterfaceBlockDeclaration block : blocks(tree)) {
+				String blockName = block.getBlockName().getName();
+				boolean in = has(block.getTypeQualifier(), StorageType.IN);
+				if ((!in && !has(block.getTypeQualifier(), StorageType.OUT)) || blockName.startsWith("gl_")
+						|| type == PatchShaderType.VERTEX && in || type == PatchShaderType.FRAGMENT && !in) {
+					continue;
+				}
+				PatchShaderType producer = type;
+				if (in) {
+					for (PatchShaderType stage : GRAPHICS_ORDER) {
+						if (stage == type) {
+							break;
+						}
+						if (trees.containsKey(stage)) {
+							producer = stage;
+						}
+					}
+				}
+				String prefix = "aeth_io_" + producer.name().toLowerCase(Locale.ROOT) + "_" + blockName + "_";
+				String instance = block.getVariableName() == null ? null : block.getVariableName().getName();
+				String array = block.getArraySpecifier() == null ? "" : print(block.getArraySpecifier());
+				int location = layoutValue(block.getTypeQualifier(), "location");
+				Map<String, String> members = new LinkedHashMap<>();
+				List<String> declarations = new ArrayList<>();
+				for (StructMember member : block.getStructBody().getMembers()) {
+					TypeQualifier q = member.getType().getTypeQualifier();
+					int explicit = layoutValue(q, "location");
+					if (explicit >= 0) {
+						location = explicit;
+					}
+					String qualifiers = qualifierWords(block.getTypeQualifier()) + " " + qualifierWords(q);
+					for (StructDeclarator declarator : member.getDeclarators()) {
+						String name = declarator.getName().getName();
+						String varying = prefix + name;
+						String suffix = declarator.getArraySpecifier() == null ? "" : print(declarator.getArraySpecifier());
+						ArraySpecifier typeArray = member.getType().getTypeSpecifier().getArraySpecifier();
+						if (typeArray != null) {
+							suffix += print(typeArray);
+						}
+						String layout = location < 0 ? "" : "layout(location = " + location + ") ";
+						declarations.add(layout + qualifiers + (in ? " in " : " out ")
+								+ typeName(member.getType().getTypeSpecifier()) + " " + varying + array + suffix + ";");
+						members.put(name, varying);
+						if (location >= 0) {
+							location += slots(typeName(member.getType().getTypeSpecifier()), structs)
+									* Math.max(1, arrayLength(declarator.getArraySpecifier())) * Math.max(1, arrayLength(typeArray));
+						}
+					}
+				}
+				if (instance == null) {
+					members.forEach((name, varying) -> blockMemberReferences(root, name, false, Map.of(name, varying)));
+				} else {
+					blockMemberReferences(root, instance, true, members);
+				}
+				replaceDeclaration(tree, root, block.getAncestor(ExternalDeclaration.class), declarations.toArray(String[]::new));
+				notes.add("interface block " + blockName + " split into " + members.size() + " varyings");
+			}
+		});
+	}
+
+	/** References to a block instance (or a member of an unnamed block), excluding locals that shadow its name. */
+	private void blockMemberReferences(Root root, String name, boolean instanced, Map<String, String> members) {
+		Map<FunctionDefinition, Boolean> shadowed = new IdentityHashMap<>();
+		for (Identifier id : new ArrayList<>(root.identifierIndex.get(name))) {
+			if (!(id.getParent() instanceof ReferenceExpression reference)) {
+				continue;
+			}
+			FunctionDefinition function = id.getAncestor(FunctionDefinition.class);
+			if (function != null && shadowed.computeIfAbsent(function, fn -> declaresLocal(fn, name))) {
+				continue;
+			}
+			if (!instanced) {
+				reference.replaceByAndDelete(t.parseExpression(root, members.get(name)));
+				continue;
+			}
+			Expression access = reference;
+			String indices = "";
+			while (access.getParent() instanceof ArrayAccessExpression index && index.getLeft() == access) {
+				indices += "[" + print(index.getRight()) + "]";
+				access = index;
+			}
+			if (access.getParent() instanceof MemberAccessExpression member && member.getOperand() == access) {
+				String varying = members.get(member.getMember().getName());
+				if (varying != null) {
+					member.replaceByAndDelete(t.parseExpression(root, varying + indices));
+				}
+			} else if (access.getParent() instanceof LengthAccessExpression length) {
+				length.replaceByAndDelete(t.parseExpression(root, members.values().iterator().next() + indices + ".length()"));
+			}
+		}
+	}
+
 	// ------------------------------------------------------------------ struct varyings
 
 	/**
@@ -1407,7 +1521,7 @@ public final class VulkanLowering {
 	private static final Pattern BUILTIN_CONSTANT = Pattern.compile("gl_(Max|Min)\\w+|gl_WorkGroupSize");
 	/** Built-in lookups and derivatives: never constant expressions, whatever their arguments. */
 	private static final Pattern NON_CONSTANT_BUILTIN = Pattern.compile(
-			"texture\\w*|texelFetch\\w*|shadow[12]D\\w*|image(Load|Store|Size|Samples|Atomic\\w+)|atomic\\w+|dFd\\w+|fwidth\\w*|interpolateAt\\w+|noise[1-4]");
+			"texture\\w*|texelFetch\\w*|shadow[12]D\\w*|image(Load|Store|Size|Samples|Atomic\\w+)|atomic\\w+|dFd\\w+|fwidth\\w*|interpolateAt\\w+|noise[1-4]|transpose|inverse");
 
 	/**
 	 * {@code const} declarations (global or local) whose initialiser is not a constant expression lose {@code const}:
@@ -1614,22 +1728,57 @@ public final class VulkanLowering {
 		if (declared == null) {
 			return;
 		}
-		Map<FunctionDefinition, Boolean> shadowed = new IdentityHashMap<>();
-		for (Identifier id : new ArrayList<>(root.identifierIndex.get(from))) {
-			if (id == declared.member().getName()) {
-				continue;
-			}
-			FunctionDefinition function = id.getAncestor(FunctionDefinition.class);
-			if (function != null && shadowed.computeIfAbsent(function, f -> declaresLocal(f, from))) {
-				continue;
-			}
-			id.setName(to);
+		for (ReferenceExpression reference : globalReferences(tree, from)) {
+			reference.getIdentifier().setName(to);
 		}
 		if (targetExists) {
 			declared.node().detachAndDelete();
 		} else {
 			declared.member().getName().setName(to);
 		}
+	}
+
+	/**
+	 * References to a global, with GLSL's local scopes: a variable starts shadowing after its initializer, and stops
+	 * at the end of its block or loop. In {@code vec4 tex = texture(tex, uv)}, the initializer still reads the sampler.
+	 */
+	private static List<ReferenceExpression> globalReferences(TranslationUnit tree, String name) {
+		List<ReferenceExpression> references = new ArrayList<>();
+		new ASTVoidVisitor() {
+			private final Deque<Set<String>> scopes = new ArrayDeque<>();
+
+			@Override
+			public Void visit(ASTNode node) {
+				boolean scope = node instanceof FunctionDefinition || node instanceof CompoundStatement || node instanceof LoopStatement;
+				if (scope) {
+					scopes.push(new HashSet<>());
+					if (node instanceof FunctionDefinition function) {
+						for (FunctionParameter parameter : function.getFunctionPrototype().getParameters()) {
+							if (parameter.getName() != null) {
+								scopes.peek().add(parameter.getName().getName());
+							}
+						}
+					}
+				}
+				super.visit(node);
+				if (node instanceof DeclarationMember member && !scopes.isEmpty()) {
+					scopes.peek().add(member.getName().getName());
+				}
+				if (scope) {
+					scopes.pop();
+				}
+				return null;
+			}
+
+			@Override
+			public Void visitReferenceExpression(ReferenceExpression reference) {
+				if (reference.getIdentifier().getName().equals(name) && scopes.stream().noneMatch(s -> s.contains(name))) {
+					references.add(reference);
+				}
+				return null;
+			}
+		}.visit(tree);
+		return references;
 	}
 
 	/** Whether {@code function} declares a parameter or local variable named {@code name}. */
@@ -2135,6 +2284,7 @@ public final class VulkanLowering {
 		if (emulated.isEmpty() && !hardware.isEmpty()) {
 			return; // function parameters keep their comparison type
 		}
+		shadowFunctionNames(tree, root);
 		Map<String, Boolean> globalsFiltered = new HashMap<>();
 		for (Global g : emulated) {
 			int map = ShadowSampling.depthIndex(g.name(), watershadow);
@@ -2199,6 +2349,67 @@ public final class VulkanLowering {
 		if (used) {
 			tree.parseAndInjectNodes(t, ASTInjectionPoint.BEFORE_FUNCTIONS, SHADOW_HELPERS);
 		}
+	}
+
+	/** Keep sampler2DShadow overloads distinct when comparison samplers become ordinary sampler2D values. */
+	private void shadowFunctionNames(TranslationUnit tree, Root root) {
+		Map<String, List<FunctionPrototype>> functions = new HashMap<>();
+		Map<FunctionPrototype, String> renamed = new IdentityHashMap<>();
+		for (FunctionPrototype function : root.nodeIndex.get(FunctionPrototype.class)) {
+			List<String> indices = new ArrayList<>();
+			for (int i = 0; i < function.getParameters().size(); i++) {
+				if (typeName(function.getParameters().get(i).getType().getTypeSpecifier()).equals("sampler2DShadow")) {
+					indices.add(Integer.toString(i));
+				}
+			}
+			if (!indices.isEmpty()) {
+				String name = function.getName().getName();
+				functions.computeIfAbsent(name, k -> new ArrayList<>()).add(function);
+				renamed.put(function, "aeth_s_" + name + "_" + String.join("_", indices));
+			}
+		}
+		if (renamed.isEmpty()) {
+			return;
+		}
+		Map<String, String> globals = new HashMap<>();
+		for (Global g : globals(tree)) {
+			globals.put(g.name(), typeName(g.specifier()));
+		}
+		for (FunctionCallExpression call : new ArrayList<>(root.nodeIndex.get(FunctionCallExpression.class))) {
+			if (call.getFunctionName() == null) {
+				continue;
+			}
+			for (FunctionPrototype function : functions.getOrDefault(call.getFunctionName().getName(), List.of())) {
+				if (call.getParameters().size() != function.getParameters().size()) {
+					continue;
+				}
+				boolean matches = true;
+				FunctionDefinition owner = call.getAncestor(FunctionDefinition.class);
+				for (int i = 0; i < function.getParameters().size(); i++) {
+					String expected = typeName(function.getParameters().get(i).getType().getTypeSpecifier());
+					if (!expected.equals("sampler2DShadow") && !expected.equals("sampler2D")) {
+						continue;
+					}
+					String name = baseName(call.getParameters().get(i));
+					String actual = globals.get(name);
+					if (owner != null) {
+						for (FunctionParameter parameter : owner.getFunctionPrototype().getParameters()) {
+							if (parameter.getName() != null && parameter.getName().getName().equals(name)) {
+								actual = typeName(parameter.getType().getTypeSpecifier());
+								break;
+							}
+						}
+					}
+					matches &= expected.equals(actual);
+				}
+				if (matches) {
+					call.getFunctionName().setName(renamed.get(function));
+					break;
+				}
+			}
+		}
+		renamed.forEach((function, name) -> function.getName().setName(name));
+		notes.add("comparison-sampler functions renamed before their samplers are lowered");
 	}
 
 	private static void retype(BuiltinFixedTypeSpecifier fixed) {
@@ -2313,7 +2524,7 @@ public final class VulkanLowering {
 						continue;
 					}
 					var arraySpecifier = member.getArraySpecifier() != null ? member.getArraySpecifier() : decl.getType().getTypeSpecifier().getArraySpecifier();
-					int length = perVertex(stage, in) ? 1 : Math.max(1, arrayLength(arraySpecifier));
+					int length = Math.max(1, arrayLength(arraySpecifier, perVertex(stage, in) ? 1 : 0));
 					String type = typeName(decl.getType().getTypeSpecifier());
 					out.add(new Port(name, q, in, slots(type, structs) * length, false, type, arraySpecifier != null));
 				}
@@ -2388,13 +2599,42 @@ public final class VulkanLowering {
 		return !(stage == PatchShaderType.VERTEX && port.in()) && !(stage == PatchShaderType.FRAGMENT && !port.in());
 	}
 
+	/** Integer stage outputs are flat even when the pack only writes the qualifier on the fragment input. */
+	private void flatIntegerVaryings() {
+		each((stage, tree, root) -> {
+			for (Port port : ports(stage, tree)) {
+				TypeQualifier qualifier = port.qualifier();
+				if (!varying(stage, port) || qualifier == null || port.type() == null
+						|| !port.type().matches("int|uint|bool|[iub]vec[234]")) {
+					continue;
+				}
+				boolean flat = qualifier.getParts().stream().anyMatch(part -> part instanceof InterpolationQualifier i
+						&& i.interpolationType == InterpolationQualifier.InterpolationType.FLAT);
+				if (!flat) {
+					new ArrayList<>(qualifier.getParts()).stream().filter(InterpolationQualifier.class::isInstance).forEach(ASTNode::detachAndDelete);
+					qualifier.getParts().add(new InterpolationQualifier(InterpolationQualifier.InterpolationType.FLAT));
+				}
+			}
+		});
+	}
+
 	/**
-	 * Explicit locations: varyings one per name across all stages (explicit ones reserved first), vertex inputs and
+	 * Explicit locations: one per name on each adjacent stage interface (explicit ones reserved first), vertex inputs and
 	 * fragment outputs per stage. Interface blocks take one location range by block name.
 	 */
 	private void locations() {
-		Map<String, Integer> varyings = new HashMap<>();
-		BitSet varyingUsed = new BitSet();
+		Map<PatchShaderType, PatchShaderType> previous = new EnumMap<>(PatchShaderType.class);
+		Map<PatchShaderType, Map<String, Integer>> names = new EnumMap<>(PatchShaderType.class);
+		Map<PatchShaderType, BitSet> used = new EnumMap<>(PatchShaderType.class);
+		PatchShaderType last = PatchShaderType.VERTEX;
+		for (PatchShaderType stage : GRAPHICS_ORDER) {
+			if (trees.containsKey(stage)) {
+				previous.put(stage, last);
+				names.put(stage, new HashMap<>());
+				used.put(stage, new BitSet());
+				last = stage;
+			}
+		}
 		for (PatchShaderType stage : GRAPHICS_ORDER) {
 			TranslationUnit tree = trees.get(stage);
 			if (tree == null) {
@@ -2403,12 +2643,15 @@ public final class VulkanLowering {
 			for (Port port : ports(stage, tree)) {
 				int location = layoutValue(port.qualifier(), "location");
 				if (location >= 0 && varying(stage, port)) {
-					varyings.putIfAbsent(port.name(), location);
-					varyingUsed.set(location, location + port.slots());
+					PatchShaderType edge = port.in() ? previous.get(stage) : stage;
+					names.get(edge).putIfAbsent(port.name(), location);
+					used.get(edge).set(location, location + port.slots());
 				}
 			}
 		}
-		packVaryings(packedVaryings(varyings.keySet(), varyingUsed));
+		if (names.containsKey(PatchShaderType.VERTEX)) {
+			packVaryings(packedVaryings(names.get(PatchShaderType.VERTEX).keySet(), used.get(PatchShaderType.VERTEX)));
+		}
 		for (PatchShaderType stage : GRAPHICS_ORDER) {
 			if (!trees.containsKey(stage)) {
 				continue;
@@ -2436,6 +2679,9 @@ public final class VulkanLowering {
 					} else if (type == PatchShaderType.FRAGMENT && !port.in()) {
 						location = allocate(fragmentOutputs, 1);
 					} else {
+						PatchShaderType edge = port.in() ? previous.get(type) : type;
+						Map<String, Integer> varyings = names.get(edge);
+						BitSet varyingUsed = used.get(edge);
 						Integer shared = varyings.get(port.name());
 						if (shared == null) {
 							shared = allocate(varyingUsed, port.slots());

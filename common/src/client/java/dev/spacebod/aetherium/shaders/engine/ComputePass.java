@@ -19,6 +19,8 @@ import dev.spacebod.aetherium.shaders.uniforms.custom.CustomUniforms;
 import java.nio.ByteBuffer;
 import java.nio.LongBuffer;
 import java.util.List;
+import java.util.Map;
+import java.util.HashMap;
 import java.util.Set;
 import java.util.function.Function;
 import java.util.regex.Matcher;
@@ -74,6 +76,9 @@ public final class ComputePass implements AutoCloseable {
 	private final long pool;
 	private final long[] sets = new long[SLOTS];
 	private final int blockSize;
+	private final int uniformStride;
+	private final Map<String, com.mojang.renderpearl.api.GpuFormat> imageFormats = new HashMap<>();
+	private final TargetImageViews targetViews;
 	private final long uniformBuffer;
 	private final long uniformAllocation;
 	private final ByteBuffer uniformMemory;
@@ -82,7 +87,7 @@ public final class ComputePass implements AutoCloseable {
 
 	private ComputePass(String name, TextureStage stage, VulkanDevice vulkan, BlockProgramUniforms uniforms, List<String> samplers, int[] localSize,
 			@Nullable Vector3i workGroups, Vector2f workGroupRelative, @Nullable IndirectPointer indirect, long setLayout, long layout, long pipeline,
-			int blockSize) {
+			int blockSize, String glsl) {
 		this.name = name;
 		this.stage = stage;
 		this.vulkan = vulkan;
@@ -97,6 +102,15 @@ public final class ComputePass implements AutoCloseable {
 		this.layout = layout;
 		this.pipeline = pipeline;
 		this.blockSize = blockSize;
+		this.targetViews = new TargetImageViews(vulkan);
+		for (String declaration : glsl.split(";")) {
+			if (!declaration.contains("uniform") || !declaration.contains("image2D")) continue;
+			Matcher target = TargetImages.matcher(declaration);
+			String format = ImageViews.declaredFormat(declaration);
+			if (format != null && target.find()) imageFormats.put(target.group(), ImageViews.format(format));
+		}
+		int alignment = Math.max(16, vulkan.getDeviceInfo().limits().minUniformOffsetAlignment());
+		this.uniformStride = (Math.max(16, blockSize) + alignment - 1) / alignment * alignment;
 		try (MemoryStack stack = MemoryStack.stackPush()) {
 			long images = samplers.stream().filter(s -> targetImage(s) != null).count();
 			int samplerCount = (int) Math.max(1, (samplers.size() - images) * SLOTS);
@@ -111,7 +125,7 @@ public final class ComputePass implements AutoCloseable {
 			for (int i = 0; i < SLOTS; i++) {
 				sets[i] = VulkanCompute.allocate(device, pool, setLayout);
 			}
-			long bufferSize = (long) Math.max(16, blockSize) * SLOTS;
+			long bufferSize = (long) uniformStride * SLOTS;
 			VmaAllocationCreateInfo alloc = VmaAllocationCreateInfo.calloc(stack).usage(Vma.VMA_MEMORY_USAGE_AUTO)
 					.flags(Vma.VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | Vma.VMA_ALLOCATION_CREATE_MAPPED_BIT);
 			VmaAllocationInfo info = VmaAllocationInfo.calloc(stack);
@@ -223,7 +237,7 @@ public final class ComputePass implements AutoCloseable {
 			customUniforms.assignTo(uniforms);
 			Vector2f relative = source.getWorkGroupRelative() != null ? source.getWorkGroupRelative() : new Vector2f(1, 1);
 			ComputePass pass = new ComputePass(name, stage, vulkan, uniforms, samplers, localSize, source.getWorkGroups(), relative,
-					source.getIndirectPointer(), prepared.setLayout(), prepared.layout(), prepared.pipeline(), blockLayout.size());
+					source.getIndirectPointer(), prepared.setLayout(), prepared.layout(), prepared.pipeline(), blockLayout.size(), lowered.glsl());
 			customUniforms.mapholderToPass(uniforms, pass);
 			List<String> missing = uniforms.unprovided();
 			if (!missing.isEmpty()) {
@@ -289,7 +303,7 @@ public final class ComputePass implements AutoCloseable {
 		}
 		slot = (slot + 1) % SLOTS;
 		long set = sets[slot];
-		int offset = Math.max(16, blockSize) * slot;
+		int offset = uniformStride * slot;
 		if (blockSize > 0) {
 			ByteBuffer bytes = uniforms.buffer().duplicate().clear();
 			bytes.limit(Math.min(bytes.capacity(), blockSize));
@@ -313,7 +327,7 @@ public final class ComputePass implements AutoCloseable {
 					if (t == null || !(t.view() instanceof VulkanGpuTextureView v)) {
 						continue;
 					}
-					view = v.vkImageView();
+					view = targetViews.view(v, imageFormats.get(samplers.get(i)));
 					sampler = 0;
 				} else {
 					SamplerTable.Bound t = textures.apply(samplers.get(i));
@@ -377,6 +391,7 @@ public final class ComputePass implements AutoCloseable {
 
 	@Override
 	public void close() {
+		targetViews.close();
 		VK10.vkDestroyPipeline(device, pipeline, null);
 		VK10.vkDestroyPipelineLayout(device, layout, null);
 		VK10.vkDestroyDescriptorSetLayout(device, setLayout, null);
