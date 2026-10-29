@@ -5,6 +5,11 @@ and versions follow [Semantic Versioning](https://semver.org).
 
 ## [Unreleased]
 
+### Fixed
+
+- Alternating anisotropic terrain and ordinary entity draws reuse their albedo samplers instead of accumulating
+  retired Vulkan samplers until a pack unloads, preventing sampler exhaustion with anisotropic texture filtering.
+
 ## [0.1.1] - 2026-10-18
 
 A patch release for Photon: mining a block shows its cracks again, and enchanted items show a proper glint.
