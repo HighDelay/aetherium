@@ -10,7 +10,8 @@ and versions follow [Semantic Versioning](https://semver.org).
 - Alternating anisotropic terrain and ordinary entity draws reuse their albedo samplers instead of accumulating
   retired Vulkan samplers until a pack unloads, preventing sampler exhaustion with anisotropic texture filtering.
 - Copies of vanilla render pipelines made by cosmetic mods retain their shader-pack entity and shadow programs,
-  preventing Essential's translucent cosmetics from falling back to unencoded vanilla output.
+  preventing Essential's translucent cosmetics from falling back to unencoded vanilla output. Unmatched pipeline
+  lookups are cached instead of scanning the registered pipelines on every draw.
 - Polytone uses vanilla leads while a shader pack is active, matching its Iris fallback and preventing rainbow leads
   with packs that encode their material buffers. Its textured leads still work without a shader pack.
 - Shader interface blocks are split into individual varyings before Minecraft builds Vulkan pipelines, preventing
@@ -31,7 +32,8 @@ and versions follow [Semantic Versioning](https://semver.org).
 - Compute uniform copies respect the device's offset alignment; pack buffers support indirect dispatch and
   1D lookup textures keep their Vulkan dimension. Supported NVIDIA subgroup partition operations are enabled.
 - Compatible target image formats use views of the same storage, including Alpha Piscium's RGBA8 clears of
-  R32UI targets. Invalid vector constants emitted by the shader optimizer trigger an unoptimized recompile.
+  R32UI targets. Mutable formats are enabled only for targets a compute program accesses through a different
+  compatible format. Invalid vector constants emitted by the shader optimizer trigger an unoptimized recompile.
 - Integer and boolean uniform providers convert to float when a pack declares a floating-point flag.
 - Custom uniform expressions support vector/scalar multiplication in either order, restoring MakeUp's TAA correction.
 - Iteration's End shaders accept matrix transpose and inverse expressions in their global initializers.
