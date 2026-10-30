@@ -7,7 +7,7 @@ import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
-/** Polytone's textured lead uses vanilla colour output; shader packs need the ordinary lead path, as with Iris. */
+/** Textured leads use vanilla colour output; shader packs need the ordinary lead rendering path. */
 @Pseudo
 @Mixin(targets = "net.mehvahdjukaar.polytone.PolytoneRenderTypes", remap = false)
 abstract class PolytoneLeashMixin {

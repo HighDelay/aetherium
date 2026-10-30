@@ -15,7 +15,7 @@ import org.lwjgl.vulkan.VK10;
 import org.lwjgl.vulkan.VkImageViewCreateInfo;
 import org.lwjgl.vulkan.VkImageViewUsageCreateInfo;
 
-/** Compute image aliases of colour targets, such as Alpha Piscium clearing an R32UI target through an RGBA8 view. */
+/** Compute image aliases of colour targets, including RGBA8 views used to clear R32UI targets. */
 final class TargetImageViews implements AutoCloseable {
 	private record Key(VulkanGpuTexture texture, GpuFormat format) { }
 	private final VulkanDevice device;

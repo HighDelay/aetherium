@@ -97,7 +97,7 @@ public class ExpressionFunctions {
 				ExpressionFunctions.addBinaryOpJOML("multiply", VectorType.VEC2, Vector2f::mul);
 				ExpressionFunctions.addBinaryOpJOML("multiply", VectorType.VEC3, Vector3f::mul);
 				ExpressionFunctions.addBinaryOpJOML("multiply", VectorType.VEC4, Vector4f::mul);
-				// MakeUp's TAA correction scales a vec2 by a scalar, as GLSL permits in either order.
+				// Custom uniform expressions can multiply a scalar by a vector in either order.
 				addComponentWise("multiply", new boolean[]{false, true}, args -> args[0] * args[1]);
 				addComponentWise("multiply", new boolean[]{true, false}, args -> args[0] * args[1]);
 			}
