@@ -8,6 +8,7 @@ import java.util.Collections;
 import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import net.minecraft.client.renderer.RenderPipelines;
 import org.jspecify.annotations.Nullable;
 
@@ -38,6 +39,9 @@ public final class PipelinePrograms {
 
 	private static final Map<RenderPipeline, Choice> MAIN = new IdentityHashMap<>();
 	private static final Map<RenderPipeline, ShaderKey> SHADOW = new IdentityHashMap<>();
+	/** Pipelines already checked for compatible copies, without a match. */
+	private static final Set<RenderPipeline> MAIN_MISSES = Collections.newSetFromMap(new IdentityHashMap<>());
+	private static final Set<RenderPipeline> SHADOW_MISSES = Collections.newSetFromMap(new IdentityHashMap<>());
 	/** Registration order (terrain first): the order programs are prebuilt in. */
 	private static final List<RenderPipeline> MAIN_ORDER = new ArrayList<>();
 	private static final List<RenderPipeline> SHADOW_ORDER = new ArrayList<>();
@@ -168,12 +172,14 @@ public final class PipelinePrograms {
 	private static void mainChoice(RenderPipeline pipeline, Choice choice) {
 		if (MAIN.put(pipeline, choice) == null) {
 			MAIN_ORDER.add(pipeline);
+			MAIN_MISSES.clear();
 		}
 	}
 
 	private static void shadow(RenderPipeline pipeline, ShaderKey key) {
 		if (SHADOW.put(pipeline, key) == null) {
 			SHADOW_ORDER.add(pipeline);
+			SHADOW_MISSES.clear();
 		}
 	}
 
@@ -208,11 +214,13 @@ public final class PipelinePrograms {
 	/** The pack program for a vanilla pipeline in the main (gbuffers) pass, or null (draw it with its vanilla shader). */
 	public static @Nullable ShaderKey main(RenderPipeline pipeline, Context context) {
 		Choice choice = MAIN.get(pipeline);
-		if (choice == null) {
+		if (choice == null && !MAIN_MISSES.contains(pipeline)) {
 			RenderPipeline original = originalCopy(pipeline, MAIN_ORDER);
 			if (original != null) {
 				choice = MAIN.get(original);
 				MAIN.put(pipeline, choice);
+			} else {
+				MAIN_MISSES.add(pipeline);
 			}
 		}
 		return choice == null ? LodCompat.key(pipeline, false) : choice.choose(context);
@@ -224,11 +232,13 @@ public final class PipelinePrograms {
 	 */
 	public static @Nullable ShaderKey shadow(RenderPipeline pipeline, Context context) {
 		ShaderKey key = SHADOW.get(pipeline);
-		if (key == null) {
+		if (key == null && !SHADOW_MISSES.contains(pipeline)) {
 			RenderPipeline original = originalCopy(pipeline, SHADOW_ORDER);
 			if (original != null) {
 				key = SHADOW.get(original);
 				SHADOW.put(pipeline, key);
+			} else {
+				SHADOW_MISSES.add(pipeline);
 			}
 		}
 		return key != null ? key : LodCompat.key(pipeline, true);
