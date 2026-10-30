@@ -141,13 +141,17 @@ final class ShaderPackCompile {
 		}
 	}
 
-	private record Program(String name, Map<String, String> sources, @Nullable ProgramSource original) {
+	private record Program(String name, Map<String, String> sources, @Nullable ProgramSource original, @Nullable ComputeSource compute) {
 		Program(String name, Map<String, String> sources) {
-			this(name, sources, null);
+			this(name, sources, null, null);
+		}
+
+		Program(String name, Map<String, String> sources, ProgramSource original) {
+			this(name, sources, original, null);
 		}
 
 		Program renamed(String name) {
-			return new Program(name, sources, original);
+			return new Program(name, sources, original, compute);
 		}
 	}
 
@@ -568,7 +572,7 @@ final class ShaderPackCompile {
 		}
 		for (ComputeSource source : list) {
 			if (source != null && source.getSource().isPresent()) {
-				out.add(new Program(source.getName(), Map.of("csh", source.getSource().get())));
+				out.add(new Program(source.getName(), Map.of("csh", source.getSource().get()), null, source));
 			}
 		}
 	}
@@ -728,7 +732,8 @@ final class ShaderPackCompile {
 		String name = program.name();
 		Map<String, String> src = program.sources();
 		if (src.containsKey("csh")) {
-			ComputePass.Lowered compute = ComputePass.lower(name, src.get("csh"), stageOf(name));
+			ComputePass.Lowered compute = program.compute() == null ? ComputePass.lower(name, src.get("csh"), stageOf(name))
+					: ComputePass.lower(program.compute(), stageOf(name));
 			return compute == null ? null : Map.of(PatchShaderType.COMPUTE, compute.glsl());
 		}
 		if (!src.containsKey("vsh") || !src.containsKey("fsh")) {

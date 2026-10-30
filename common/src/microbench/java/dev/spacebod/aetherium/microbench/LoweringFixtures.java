@@ -11,6 +11,7 @@ import com.mojang.renderpearl.api.pipeline.RenderPipeline;
 import com.mojang.renderpearl.api.pipeline.ShaderType;
 import com.mojang.renderpearl.api.vertex.VertexFormat;
 import dev.spacebod.aetherium.client.gpu.PackRenderPipeline;
+import dev.spacebod.aetherium.shaders.engine.ComputeImageFormatFixtures;
 import dev.spacebod.aetherium.shaders.engine.CompositePass;
 import dev.spacebod.aetherium.shaders.engine.ComputePass;
 import dev.spacebod.aetherium.shaders.engine.DepthTargets;
@@ -158,6 +159,7 @@ final class LoweringFixtures {
 		defaultShadowBuffers();
 		customExpressions();
 		AlbedoSamplerFixtures.run();
+		ComputeImageFormatFixtures.run();
 		if (failed != 0) {
 			throw new AssertionError(failed + " lowering fixture(s) failed");
 		}
