@@ -704,6 +704,13 @@ final class ShaderPackCompile {
 		if (errors.isEmpty() && spirv.containsKey(PatchShaderType.FRAGMENT)) {
 			Map<PatchShaderType, List<String>> reflected = new EnumMap<>(PatchShaderType.class);
 			spirv.forEach((type, code) -> reflected.put(type, SpirvInterface.reflect(code, false)));
+			String attribute = isWorld(program.name()) ? null
+					: SpirvInterface.fullscreenVertexInputMismatch(reflected.getOrDefault(PatchShaderType.VERTEX, List.of()));
+			if (attribute != null) {
+				errors.put(PatchShaderType.VERTEX, attribute);
+				rawErrors.put(program.name() + PatchShaderType.VERTEX, attribute);
+				spirv.remove(PatchShaderType.VERTEX);
+			}
 			String mismatch = SpirvInterface.interpolationMismatch(reflected);
 			if (mismatch != null) {
 				errors.put(PatchShaderType.FRAGMENT, mismatch);
