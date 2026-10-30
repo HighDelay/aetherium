@@ -230,7 +230,7 @@ public final class PackTargets implements AutoCloseable {
 				int s = side;
 				GpuFormat format = formats[i];
 				int fw = w, fh = h;
-				textures[i][side] = TargetStorage.create(() -> device.createTexture(() -> "Aetherium Shaders colortex" + target + (s == 0 ? "" : " alt"), USAGE, format, fw, fh, 1, levels));
+				textures[i][side] = TargetStorage.create(false, target, () -> device.createTexture(() -> "Aetherium Shaders colortex" + target + (s == 0 ? "" : " alt"), USAGE, format, fw, fh, 1, levels));
 				// Level 0 alone: render attachments must be one level; reads before the chain exists see level 0 only.
 				views[i][side] = device.createTextureView(textures[i][side], 0, 1);
 				if (levels > 1) {
