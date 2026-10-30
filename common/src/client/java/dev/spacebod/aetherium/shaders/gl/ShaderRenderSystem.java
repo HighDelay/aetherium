@@ -23,10 +23,7 @@ public final class ShaderRenderSystem {
 	}
 
 	public static void uniform1i(int location, int v0) {
-		ByteBuffer b = UniformBlockBuffer.target(location);
-		if (b != null) {
-			b.putInt(location, v0);
-		}
+		UniformBlockBuffer.putInt(location, v0);
 	}
 
 	public static void uniform2f(int location, float v0, float v1) {
@@ -136,8 +133,8 @@ public final class ShaderRenderSystem {
 		return false;
 	}
 
-	/** Buffer blending per draw buffer is part of vanilla pipelines' colour-target state on both backends. */
+	/** Independent draw-buffer blending requires the device feature enabled for shader-pack pipelines. */
 	public static boolean supportsBufferBlending() {
-		return true;
+		return StorageFeatures.has(StorageFeatures.INDEPENDENT_BLEND);
 	}
 }
