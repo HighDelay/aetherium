@@ -15,6 +15,7 @@ import dev.spacebod.aetherium.shaders.engine.ComputePass;
 import dev.spacebod.aetherium.shaders.engine.ShadowSampling;
 import dev.spacebod.aetherium.shaders.engine.StorageBindings;
 import dev.spacebod.aetherium.shaders.engine.UniformBlock;
+import dev.spacebod.aetherium.shaders.engine.UniformProviderFixtures;
 import dev.spacebod.aetherium.shaders.engine.WorldInterface;
 import dev.spacebod.aetherium.shaders.gl.blending.AlphaTests;
 import dev.spacebod.aetherium.shaders.pipeline.transform.PatchShaderType;
@@ -120,7 +121,7 @@ final class LoweringFixtures {
 		System.out.printf(Locale.ROOT, "%nlowering fixtures: %d passed, %d failed%n", passed, failed);
 		directiveScans();
 		pipelineStates();
-		booleanUniforms();
+		UniformProviderFixtures.run();
 		compositeConstantShapes();
 		AlbedoSamplerFixtures.run();
 		if (failed != 0) {
@@ -161,32 +162,6 @@ final class LoweringFixtures {
 		System.out.println("composite constants: valid vector shape retained; extra constituents and truncation rejected");
 	}
 
-	private static void booleanUniforms() {
-		for (boolean value : new boolean[]{true, false}) {
-			var layout = new UniformBlock.Layout(List.of(new UniformBlock.Member("float", "flagFloat", 0, 0, null),
-					new UniformBlock.Member("bool", "flagBool", 0, 4, null)), 16);
-			var uniforms = new dev.spacebod.aetherium.shaders.engine.BlockProgramUniforms("fixture/flags", layout);
-			uniforms.uniform1b(dev.spacebod.aetherium.shaders.gl.uniform.UniformUpdateFrequency.PER_FRAME, "flagFloat", () -> value);
-			uniforms.uniform1b(dev.spacebod.aetherium.shaders.gl.uniform.UniformUpdateFrequency.PER_FRAME, "flagBool", () -> value);
-			uniforms.update();
-			if (!uniforms.unprovided().isEmpty() || uniforms.buffer().getFloat(0) != (value ? 1.0f : 0.0f)
-					|| uniforms.buffer().getInt(4) != (value ? 1 : 0)) {
-				throw new AssertionError("boolean flags were not written using the declared uniform type");
-			}
-		}
-		var uniforms = new dev.spacebod.aetherium.shaders.engine.BlockProgramUniforms("fixture/cached_flag",
-				new UniformBlock.Layout(List.of(new UniformBlock.Member("float", "is_burning", 0, 0, null)), 16));
-		int location = uniforms.location("is_burning", dev.spacebod.aetherium.shaders.gl.uniform.UniformType.INT).orElseThrow();
-		dev.spacebod.aetherium.shaders.engine.UniformBlockBuffer.begin(uniforms.buffer());
-		try {
-			dev.spacebod.aetherium.shaders.gl.ShaderRenderSystem.uniform1i(location, 1);
-			if (uniforms.buffer().getFloat(0) != 1.0f) throw new AssertionError("cached flag was bitcast instead of converted");
-		} finally {
-			dev.spacebod.aetherium.shaders.engine.UniformBlockBuffer.end();
-		}
-		System.out.println("boolean uniforms: true/false stored as float and bool using their declared representations");
-	}
-
 
 
 
@@ -206,7 +181,7 @@ final class LoweringFixtures {
 		RenderPipeline pipeline = PackRenderPipeline.build(RenderPipeline.builder().withLocation(id).withVertexShader(id).withFragmentShader(id)
 				.withPrimitiveTopology(PrimitiveTopology.TRIANGLES).withVertexBinding(0, DefaultVertexFormat.POSITION_TEX)
 				.withCull(false).withPushConstantSize(16), targets);
-		if (!pipeline.getColorTargetStates().equals(java.util.Arrays.asList(targets)) || !pipeline.getLocation().equals(id)
+		if (!pipeline.getColorTargetStates().equals(Arrays.asList(targets)) || !pipeline.getLocation().equals(id)
 				|| pipeline.isCull() || pipeline.pushConstantSize() != 16 || pipeline.getVertexFormatBinding(0) != DefaultVertexFormat.POSITION_TEX) {
 			throw new AssertionError("independent blending changed attachment or pipeline state");
 		}
@@ -321,7 +296,9 @@ final class LoweringFixtures {
 		}
 		Reflected r = new Reflected(lines, stages, layout, resources, words);
 		String mismatch = SpirvInterface.interpolationMismatch(lines);
-		if (mismatch != null) return new Result(false, mismatch, stages);
+				if (mismatch != null) {
+					return new Result(false, mismatch, stages);
+				}
 		for (Check c : f.checks()) {
 			boolean ok;
 			try {
@@ -824,7 +801,9 @@ final class LoweringFixtures {
 					for (int i = 0; i < 20; i++) {
 						if (r.location(V, "out", "vi" + i) != r.location(G, "in", "vi" + i)
 								|| r.location(G, "out", "go" + i) != r.location(F, "in", "go" + i)
-								|| r.location(G, "out", "go" + i) >= 29) return false;
+								|| r.location(G, "out", "go" + i) >= 29) {
+							return false;
+						}
 					}
 					return true;
 				}));
