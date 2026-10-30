@@ -285,7 +285,7 @@ final class LoweringFixtures {
 		System.out.println("fragment outputs: empty placeholders use no targets; legacy and modern colour outputs kept");
 	}
 
-	/** SEUS writes shadowcolor1 without declaring DRAWBUFFERS; shadow defaults differ from world/full-screen defaults. */
+	/** Shadow programs can write a second colour output without a draw-buffer directive. */
 	private static void defaultShadowBuffers() {
 		String fragment = "void main() { gl_FragData[0] = vec4(1); gl_FragData[1] = vec4(0.5); }";
 		for (String name : List.of("shadow", "shadow_solid", "shadow_cutout", "shadow_water", "shadow_entities", "dh_shadow",
@@ -323,12 +323,12 @@ final class LoweringFixtures {
 					throw new AssertionError("incorrect scalar/vector multiplication: " + text + " -> " + vector);
 			}
 		} catch (Exception e) {
-			throw new AssertionError("MakeUp's TAA expression could not be resolved", e);
+			throw new AssertionError("scalar/vector expression could not be resolved", e);
 		}
 		System.out.println("custom expressions: vector/scalar multiplication works in both orders and nested calls");
 	}
 
-	/** Iteration's water writes a normal target and two colour targets with different blend functions. */
+	/** A multi-target program can use distinct blend functions for normal and colour outputs. */
 	private static void pipelineStates() {
 		Identifier id = Identifier.fromNamespaceAndPath("aetherium_shaders", "fixture/independent_blending");
 		BlendFunction alpha = new BlendFunction(BlendFactor.SRC_ALPHA, BlendFactor.ONE_MINUS_SRC_ALPHA, BlendFactor.ZERO, BlendFactor.ONE);
