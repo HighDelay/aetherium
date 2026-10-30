@@ -178,8 +178,7 @@ public final class ImageViews {
 						}
 						view = format(declared);
 						key = declared;
-					} else if (kind.equals(kind(base)) || !storage && kind.equals(FLOAT)) {
-						// Same kind as the image (a float sampler of an integer image is left as written).
+					} else if (kind.equals(kind(base))) {
 						continue;
 					} else {
 						view = retype(base, kind);
@@ -214,7 +213,7 @@ public final class ImageViews {
 	}
 
 	/** The format qualifier in a declaration's {@code layout(...)}, lower case, or null. */
-	private static @Nullable String declaredFormat(String statement) {
+	public static @Nullable String declaredFormat(String statement) {
 		Matcher layout = LAYOUT.matcher(statement);
 		while (layout.find()) {
 			for (String part : layout.group(1).split(",")) {
