@@ -1,27 +1,36 @@
 package dev.spacebod.aetherium.microbench;
 
-import com.mojang.blaze3d.vertex.DefaultVertexFormat;
-import com.mojang.renderpearl.api.pipeline.ColorTargetState;
-import com.mojang.renderpearl.api.pipeline.RenderPipeline;
-import com.mojang.renderpearl.api.vertex.VertexFormat;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
-import net.minecraft.resources.Identifier;
 import com.google.common.collect.ImmutableList;
 import dev.spacebod.aetherium.client.gpu.StorageFeatures;
+import dev.spacebod.aetherium.shaders.engine.DepthTargets;
+import dev.spacebod.aetherium.shaders.engine.SamplerUsage;
 import dev.spacebod.aetherium.shaders.features.FeatureFlags;
 import dev.spacebod.aetherium.shaders.parsing.ExpressionFunctions;
 import dev.spacebod.aetherium.shaders.parsing.ExpressionOperators;
 import dev.spacebod.aetherium.shaders.parsing.VectorType;
+import dev.spacebod.aetherium.shaders.shaderpack.DimensionId;
 import dev.spacebod.aetherium.shaders.shaderpack.ShaderPack;
+import dev.spacebod.aetherium.shaders.shaderpack.materialmap.BlockEntry;
+import dev.spacebod.aetherium.shaders.shaderpack.materialmap.BlockMaterialMapping;
+import dev.spacebod.aetherium.shaders.shaderpack.materialmap.BlockRenderType;
+import dev.spacebod.aetherium.shaders.shaderpack.materialmap.NamespacedId;
+import dev.spacebod.aetherium.shaders.shaderpack.preprocessor.PropertiesPreprocessor;
+import dev.spacebod.aetherium.shaders.shaderpack.programs.ProgramSource;
+import dev.spacebod.aetherium.shaders.shaderpack.properties.ProgramDirectives;
+import it.unimi.dsi.fastutil.ints.Int2ObjectLinkedOpenHashMap;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Arrays;
+import java.util.List;
+import java.util.Map;
 import kroppeb.stareval.function.FunctionReturn;
 import kroppeb.stareval.function.Type;
 import kroppeb.stareval.parser.Parser;
 import kroppeb.stareval.resolver.ExpressionResolver;
+import net.minecraft.SharedConstants;
+import net.minecraft.server.Bootstrap;
+import net.minecraft.world.level.block.Blocks;
 import org.joml.Vector2f;
 
 public final class PackParsingFixtures {
@@ -29,8 +38,8 @@ public final class PackParsingFixtures {
 	}
 
 	public static void main(String[] args) {
-		net.minecraft.SharedConstants.tryDetectVersion();
-		net.minecraft.server.Bootstrap.bootStrap();
+		SharedConstants.tryDetectVersion();
+		Bootstrap.bootStrap();
 		materialMaps();
 		computeSamplerUsage();
 		propertyComments();
@@ -90,24 +99,24 @@ public final class PackParsingFixtures {
 	}
 
 	private static void materialMaps() {
-		net.minecraft.SharedConstants.tryDetectVersion();
-		net.minecraft.server.Bootstrap.bootStrap();
-		var entries = new it.unimi.dsi.fastutil.ints.Int2ObjectLinkedOpenHashMap<List<dev.spacebod.aetherium.shaders.shaderpack.materialmap.BlockEntry>>();
-		var mixedCase = new dev.spacebod.aetherium.shaders.shaderpack.materialmap.NamespacedId("minecraft", "polished_Diorite_slab");
-		var invalid = new dev.spacebod.aetherium.shaders.shaderpack.materialmap.NamespacedId("minecraft", "invalid block");
-		entries.put(9, List.of(new dev.spacebod.aetherium.shaders.shaderpack.materialmap.BlockEntry(invalid, Map.of()),
-				new dev.spacebod.aetherium.shaders.shaderpack.materialmap.BlockEntry(mixedCase, Map.of()),
-				new dev.spacebod.aetherium.shaders.shaderpack.materialmap.BlockEntry(
-						new dev.spacebod.aetherium.shaders.shaderpack.materialmap.NamespacedId("minecraft", "stone"), Map.of())));
-		var ids = dev.spacebod.aetherium.shaders.shaderpack.materialmap.BlockMaterialMapping.createBlockStateIdMap(entries,
-				new it.unimi.dsi.fastutil.ints.Int2ObjectLinkedOpenHashMap<>());
-		if (ids.getInt(net.minecraft.world.level.block.Blocks.POLISHED_DIORITE_SLAB.defaultBlockState()) != 9
-				|| ids.getInt(net.minecraft.world.level.block.Blocks.STONE.defaultBlockState()) != 9) {
+		SharedConstants.tryDetectVersion();
+		Bootstrap.bootStrap();
+		var entries = new Int2ObjectLinkedOpenHashMap<List<BlockEntry>>();
+		var mixedCase = new NamespacedId("minecraft", "polished_Diorite_slab");
+		var invalid = new NamespacedId("minecraft", "invalid block");
+		entries.put(9, List.of(new BlockEntry(invalid, Map.of()),
+				new BlockEntry(mixedCase, Map.of()),
+				new BlockEntry(
+						new NamespacedId("minecraft", "stone"), Map.of())));
+		var ids = BlockMaterialMapping.createBlockStateIdMap(entries,
+				new Int2ObjectLinkedOpenHashMap<>());
+		if (ids.getInt(Blocks.POLISHED_DIORITE_SLAB.defaultBlockState()) != 9
+				|| ids.getInt(Blocks.STONE.defaultBlockState()) != 9) {
 			throw new AssertionError("a malformed block ID discarded valid entries in the same material group");
 		}
-		var type = dev.spacebod.aetherium.shaders.shaderpack.materialmap.BlockRenderType.CUTOUT;
-		var types = dev.spacebod.aetherium.shaders.shaderpack.materialmap.BlockMaterialMapping.createBlockTypeMap(Map.of(mixedCase, type, invalid, type));
-		if (types.size() != 1 || types.get(net.minecraft.world.level.block.Blocks.POLISHED_DIORITE_SLAB) != type) {
+		var type = BlockRenderType.CUTOUT;
+		var types = BlockMaterialMapping.createBlockTypeMap(Map.of(mixedCase, type, invalid, type));
+		if (types.size() != 1 || types.get(Blocks.POLISHED_DIORITE_SLAB) != type) {
 			throw new AssertionError("block layer IDs did not use the same tolerant lookup");
 		}
 		System.out.println("material maps: mixed-case IDs resolved; invalid entries skipped; valid entries retained");
@@ -125,34 +134,38 @@ public final class PackParsingFixtures {
 				"deferred6_a.csh", "uniform sampler2D deferredOnly;",
 				"composite7_a.csh", "uniform sampler2DShadow shadowtex1HW;");
 		try {
-			var directory = java.nio.file.Files.createTempDirectory("aetherium-compute-usage-");
+			var directory = Files.createTempDirectory("aetherium-compute-usage-");
 			try {
 				for (var file : files.entrySet()) {
-					java.nio.file.Files.writeString(directory.resolve(file.getKey()),
+					Files.writeString(directory.resolve(file.getKey()),
 							"#version 430\nlayout(local_size_x=1) in;\n" + file.getValue() + "\nvoid main() {}\n");
 				}
-				var pack = new dev.spacebod.aetherium.shaders.shaderpack.ShaderPack(directory,
-						com.google.common.collect.ImmutableList.of(), false);
-				var usage = dev.spacebod.aetherium.shaders.engine.SamplerUsage.of(pack.getProgramSet(
-						dev.spacebod.aetherium.shaders.shaderpack.DimensionId.OVERWORLD));
+				var pack = new ShaderPack(directory,
+						ImmutableList.of(), false);
+				var usage = SamplerUsage.of(pack.getProgramSet(
+						DimensionId.OVERWORLD));
 				for (String name : List.of("setupOnly", "shadowOnly", "depthtex2", "beginOnly", "prepareOnly", "shadowcompOnly", "deferredOnly", "shadowtex1HW")) {
-					if (!usage.declares(name)) throw new AssertionError("compute-only sampler was missed: " + name);
+					if (!usage.declares(name)) {
+						throw new AssertionError("compute-only sampler was missed: " + name);
+					}
 				}
-				if (!usage.samplesOpaqueShadowDepth() || !usage.samplesDepth(dev.spacebod.aetherium.shaders.engine.DepthTargets.NO_HAND)) {
+				if (!usage.samplesOpaqueShadowDepth() || !usage.samplesDepth(DepthTargets.NO_HAND)) {
 					throw new AssertionError("compute-only readers lost their opaque shadow or no-hand depth copy");
 				}
 			} finally {
-				for (String file : files.keySet()) java.nio.file.Files.deleteIfExists(directory.resolve(file));
-				java.nio.file.Files.delete(directory);
+				for (String file : files.keySet()) {
+					Files.deleteIfExists(directory.resolve(file));
+				}
+				Files.delete(directory);
 			}
-		} catch (java.io.IOException e) {
+		} catch (IOException e) {
 			throw new AssertionError("cannot prepare compute sampler fixture", e);
 		}
 		System.out.println("sampler usage: compute-only readers retained across setup, shadow, final and all frame stages");
 	}
 
 	private static void propertyComments() {
-		String processed = dev.spacebod.aetherium.shaders.shaderpack.preprocessor.PropertiesPreprocessor.preprocessSource(
+		String processed = PropertiesPreprocessor.preprocessSource(
 				"# Non-English comment bytes: \u0085 comment tail\r\nitem.1=minecraft:torch\r# another \u0085 tail\nitem.2=minecraft:lantern\n", List.of());
 		if (!processed.contains("item.1=minecraft:torch") || !processed.contains("item.2=minecraft:lantern")
 				|| processed.contains("tail")) {
@@ -163,13 +176,15 @@ public final class PackParsingFixtures {
 
 	private static void fragmentOutputScan() {
 		for (String source : List.of("void main() {}", "void main() { discard; }", "// gl_FragColor out\nvoid main() {}")) {
-			if (dev.spacebod.aetherium.shaders.shaderpack.properties.ProgramDirectives.hasFragmentOutput(source))
+			if (ProgramDirectives.hasFragmentOutput(source)) {
 				throw new AssertionError("placeholder added a phantom colour target");
+			}
 		}
 		for (String source : List.of("void main() { gl_FragColor = vec4(1); }", "void main() { gl_FragData[0] = vec4(1); }",
 				"layout(location=0) out vec4 color; void main() { color=vec4(1); }")) {
-			if (!dev.spacebod.aetherium.shaders.shaderpack.properties.ProgramDirectives.hasFragmentOutput(source))
+			if (!ProgramDirectives.hasFragmentOutput(source)) {
 				throw new AssertionError("real fragment output lost its default target");
+			}
 		}
 		System.out.println("fragment outputs: empty placeholders use no targets; legacy and modern colour outputs kept");
 	}
@@ -187,9 +202,9 @@ public final class PackParsingFixtures {
 					default -> fragment;
 				};
 				int[] expected = variant == 1 ? new int[]{1, 0} : variant == 2 ? new int[0] : shadow ? new int[]{0, 1} : new int[]{0};
-				var source = new dev.spacebod.aetherium.shaders.shaderpack.programs.ProgramSource(name,
+				var source = new ProgramSource(name,
 						"void main() { gl_Position = vec4(0); }", null, null, null, text, null, null, null);
-				if (!java.util.Arrays.equals(expected, source.getDirectives().getDrawBuffers())) {
+				if (!Arrays.equals(expected, source.getDirectives().getDrawBuffers())) {
 					throw new AssertionError(name + " lost its " + (variant == 1 ? "explicit" : "default") + " colour targets");
 				}
 			}
@@ -199,17 +214,18 @@ public final class PackParsingFixtures {
 
 	private static void customExpressions() {
 		try {
-			var resolver = new kroppeb.stareval.resolver.ExpressionResolver(
-					dev.spacebod.aetherium.shaders.parsing.ExpressionFunctions.functions, name -> null, true);
+			var resolver = new ExpressionResolver(
+					ExpressionFunctions.functions, name -> null, true);
 			for (String text : List.of("vec2(0.01, 0.02) * 0.51", "0.51 * vec2(0.01, 0.02)",
 					"(vec2(0.01, 0.02) * 0.5) * 1.02")) {
-				var parsed = kroppeb.stareval.parser.Parser.parse(text, dev.spacebod.aetherium.shaders.parsing.ExpressionOperators.options);
-				var expression = resolver.resolveExpression(dev.spacebod.aetherium.shaders.parsing.VectorType.VEC2, parsed);
-				var value = new kroppeb.stareval.function.FunctionReturn();
+				var parsed = Parser.parse(text, ExpressionOperators.options);
+				var expression = resolver.resolveExpression(VectorType.VEC2, parsed);
+				var value = new FunctionReturn();
 				expression.evaluateTo(null, value);
-				var vector = (org.joml.Vector2f) value.objectReturn;
-				if (Math.abs(vector.x - 0.0051f) > 1e-7f || Math.abs(vector.y - 0.0102f) > 1e-7f)
+				var vector = (Vector2f) value.objectReturn;
+				if (Math.abs(vector.x - 0.0051f) > 1e-7f || Math.abs(vector.y - 0.0102f) > 1e-7f) {
 					throw new AssertionError("incorrect scalar/vector multiplication: " + text + " -> " + vector);
+				}
 			}
 		} catch (Exception e) {
 			throw new AssertionError("scalar/vector expression could not be resolved", e);
