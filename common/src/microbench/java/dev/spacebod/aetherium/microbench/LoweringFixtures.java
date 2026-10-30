@@ -193,7 +193,7 @@ final class LoweringFixtures {
 
 
 
-	/** Iteration's water writes a normal target and two colour targets with different blend functions. */
+	/** A multi-target program can use distinct blend functions for normal and colour outputs. */
 	private static void pipelineStates() {
 		Identifier id = Identifier.fromNamespaceAndPath("aetherium_shaders", "fixture/independent_blending");
 		BlendFunction alpha = new BlendFunction(BlendFactor.SRC_ALPHA, BlendFactor.ONE_MINUS_SRC_ALPHA, BlendFactor.ZERO, BlendFactor.ONE);
