@@ -23,7 +23,10 @@ public final class ShaderRenderSystem {
 	}
 
 	public static void uniform1i(int location, int v0) {
-		UniformBlockBuffer.putInt(location, v0);
+		ByteBuffer b = UniformBlockBuffer.target(location);
+		if (b != null) {
+			b.putInt(location, v0);
+		}
 	}
 
 	public static void uniform2f(int location, float v0, float v1) {

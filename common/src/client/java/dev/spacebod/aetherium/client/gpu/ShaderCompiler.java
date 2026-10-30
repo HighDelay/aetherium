@@ -1,5 +1,6 @@
 package dev.spacebod.aetherium.client.gpu;
 
+import dev.spacebod.aetherium.shaders.AetheriumShaders;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.util.HashMap;
@@ -26,7 +27,7 @@ public final class ShaderCompiler {
 		if (!validCompositeConstants(code)) {
 			// shaderc's optimizer can emit a vec3 constant with four constituents in large compute programs.
 			MemoryUtil.memFree(code);
-			dev.spacebod.aetherium.shaders.AetheriumShaders.logger.info("[{}] shader optimizer emitted an invalid vector constant; recompiling without optimization", name);
+			AetheriumShaders.logger.info("[{}] shader optimizer emitted an invalid vector constant; recompiling without optimization", name);
 			code = compute(name, source, Shaderc.shaderc_optimization_level_zero);
 			if (!validCompositeConstants(code)) {
 				MemoryUtil.memFree(code);
@@ -43,12 +44,16 @@ public final class ShaderCompiler {
 		for (int at = 5; at < words.limit();) {
 			int count = words.get(at) >>> 16;
 			int opcode = words.get(at) & 0xFFFF;
-			if (count == 0 || at + count > words.limit()) return false;
+			if (count == 0 || at + count > words.limit()) {
+				return false;
+			}
 			if ((opcode == 23 || opcode == 24) && count == 4) {
 				components.put(words.get(at + 1), words.get(at + 3));
 			} else if ((opcode == 44 || opcode == 51) && count >= 3) {
 				Integer expected = components.get(words.get(at + 1));
-				if (expected != null && count - 3 != expected) return false;
+				if (expected != null && count - 3 != expected) {
+					return false;
+				}
 			}
 			at += count;
 		}

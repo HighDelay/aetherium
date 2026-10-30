@@ -79,8 +79,12 @@ final class SpirvInterface {
 				}
 				line.append(name).append(' ').append(type(compiler, r.type_id()));
 				if (kind.equals("in") || kind.equals("out")) {
-					if (Spvc.spvc_compiler_has_decoration(compiler, r.id(), DECORATION_FLAT)) line.append(" flat");
-					if (Spvc.spvc_compiler_has_decoration(compiler, r.id(), DECORATION_NO_PERSPECTIVE)) line.append(" noperspective");
+					if (Spvc.spvc_compiler_has_decoration(compiler, r.id(), DECORATION_FLAT)) {
+						line.append(" flat");
+					}
+					if (Spvc.spvc_compiler_has_decoration(compiler, r.id(), DECORATION_NO_PERSPECTIVE)) {
+						line.append(" noperspective");
+					}
 				}
 				if (kind.equals("sampler") && Spvc.spvc_type_get_image_is_depth(Spvc.spvc_compiler_get_type_handle(compiler, r.base_type_id()))) {
 					line.append(" depth"); // a depth-comparison image (sampler2DShadow)
@@ -98,10 +102,14 @@ final class SpirvInterface {
 		var producer = stages.getOrDefault(stages.containsKey(PatchShaderType.GEOMETRY) ? PatchShaderType.GEOMETRY : PatchShaderType.VERTEX, List.of());
 		Map<String, String> outputs = new HashMap<>();
 		for (String line : producer) {
-			if (line.startsWith("out ")) outputs.put(line.split(" ")[1], line);
+			if (line.startsWith("out ")) {
+				outputs.put(line.split(" ")[1], line);
+			}
 		}
 		for (String input : stages.getOrDefault(PatchShaderType.FRAGMENT, List.of())) {
-			if (!input.startsWith("in ")) continue;
+			if (!input.startsWith("in ")) {
+				continue;
+			}
 			String location = input.split(" ")[1];
 			String output = outputs.get(location);
 			if (output != null && (input.endsWith(" flat") != output.endsWith(" flat")
