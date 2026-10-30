@@ -1,5 +1,6 @@
 package dev.spacebod.aetherium.shaders.engine;
 
+import com.mojang.renderpearl.api.GpuFormat;
 import com.mojang.renderpearl.backend.vulkan.VulkanDevice;
 import com.mojang.renderpearl.backend.vulkan.VulkanGpuSampler;
 import com.mojang.renderpearl.backend.vulkan.VulkanGpuTextureView;
@@ -20,7 +21,6 @@ import java.nio.ByteBuffer;
 import java.nio.LongBuffer;
 import java.util.List;
 import java.util.Map;
-import java.util.HashMap;
 import java.util.Set;
 import java.util.function.Function;
 import java.util.regex.Matcher;
@@ -77,7 +77,7 @@ public final class ComputePass implements AutoCloseable {
 	private final long[] sets = new long[SLOTS];
 	private final int blockSize;
 	private final int uniformStride;
-	private final Map<String, com.mojang.renderpearl.api.GpuFormat> imageFormats = new HashMap<>();
+	private final Map<String, GpuFormat> imageFormats;
 	private final TargetImageViews targetViews;
 	private final long uniformBuffer;
 	private final long uniformAllocation;
@@ -103,12 +103,7 @@ public final class ComputePass implements AutoCloseable {
 		this.pipeline = pipeline;
 		this.blockSize = blockSize;
 		this.targetViews = new TargetImageViews(vulkan);
-		for (String declaration : glsl.split(";")) {
-			if (!declaration.contains("uniform") || !declaration.contains("image2D")) continue;
-			Matcher target = TargetImages.matcher(declaration);
-			String format = ImageViews.declaredFormat(declaration);
-			if (format != null && target.find()) imageFormats.put(target.group(), ImageViews.format(format));
-		}
+		this.imageFormats = TargetImageViews.formats(glsl);
 		int alignment = Math.max(16, vulkan.getDeviceInfo().limits().minUniformOffsetAlignment());
 		this.uniformStride = (Math.max(16, blockSize) + alignment - 1) / alignment * alignment;
 		try (MemoryStack stack = MemoryStack.stackPush()) {

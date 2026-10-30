@@ -178,7 +178,8 @@ public final class ImageViews {
 						}
 						view = format(declared);
 						key = declared;
-					} else if (kind.equals(kind(base))) {
+					} else if (kind.equals(kind(base)) || !storage && kind.equals(FLOAT)) {
+						// Same kind as the image (a float sampler of an integer image is left as written).
 						continue;
 					} else {
 						view = retype(base, kind);
