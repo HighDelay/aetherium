@@ -19,6 +19,8 @@ final class AlbedoSamplerFixtures {
 	}
 
 	static void run() {
+		net.minecraft.SharedConstants.tryDetectVersion();
+		net.minecraft.server.Bootstrap.bootStrap();
 		var settings = WorldRenderingSettings.INSTANCE;
 		boolean oldBreaksAnisotropy = settings.breaksAnisotropy();
 		List<TestSampler> allocated = new ArrayList<>();
