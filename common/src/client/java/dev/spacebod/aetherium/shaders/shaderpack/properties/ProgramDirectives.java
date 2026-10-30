@@ -21,9 +21,12 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
+import java.util.regex.Pattern;
 
 public class ProgramDirectives {
 	private static final ImmutableList<String> LEGACY_RENDER_TARGETS = PackRenderTargetDirectives.LEGACY_RENDER_TARGETS;
+	private static final Pattern COMMENTS = Pattern.compile("/\\*.*?\\*/|//[^\\r\\n]*", Pattern.DOTALL);
+	private static final Pattern FRAGMENT_OUTPUT = Pattern.compile("\\b(?:gl_FragColor|gl_FragData|out)\\b");
 
 	private final int[] drawBuffers;
 	private final ViewportData viewportScale;
@@ -52,7 +55,8 @@ public class ProgramDirectives {
 	public ProgramDirectives(ProgramSource source, ShaderProperties properties, Set<Integer> supportedRenderTargets,
 							 @Nullable BlendModeOverride defaultBlendOverride) {
 		// DRAWBUFFERS/RENDERTARGETS are only read from the fragment shader; whichever appears last wins.
-		// Without either, /* DRAWBUFFERS:0 */ is assumed. SEUS v08/v10 need 01234567, but that breaks TAA in
+		// Without either, world/full-screen programs assume 0 and shadow programs assume 01, as in Iris.
+		// SEUS v08/v10 need 01234567 for world programs, but that breaks TAA in
 		// Sildur's Vibrant Shaders (gbuffers_skybasic has no directive and would write garbage to colortex7).
 		Optional<CommentDirective> optionalDrawbuffersDirective = findDrawbuffersDirective(source.getFragmentSource());
 		Optional<CommentDirective> optionalRendertargetsDirective = findRendertargetsDirective(source.getFragmentSource());
@@ -68,7 +72,14 @@ public class ProgramDirectives {
 			}
 		}).orElseGet(() -> {
 			unknownDrawBuffers = true;
-			return new int[]{0};
+			// Empty and discard-only placeholders have no colour output. A phantom colortex0 here can push a pack
+			// with eight real targets (Alpha Piscium, Bliss) over the device's attachment limit and drop a real one.
+			if (!hasFragmentOutput(source.getFragmentSource().orElse(""))) {
+				return new int[0];
+			}
+			String name = source.getName();
+			boolean shadow = name.equals("shadow") || name.startsWith("shadow_") || name.equals("dh_shadow");
+			return shadow ? new int[]{0, 1} : new int[]{0};
 		});
 
 		if (properties != null) {
@@ -115,6 +126,10 @@ public class ProgramDirectives {
 		});
 
 		this.mipmappedBuffers = ImmutableSet.copyOf(mipmappedBuffers);
+	}
+
+	public static boolean hasFragmentOutput(String source) {
+		return FRAGMENT_OUTPUT.matcher(COMMENTS.matcher(source).replaceAll(" ")).find();
 	}
 
 	private static Optional<CommentDirective> findDrawbuffersDirective(Optional<String> stageSource) {
