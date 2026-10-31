@@ -14,6 +14,7 @@ import dev.spacebod.aetherium.shaders.shaderpack.materialmap.BlockEntry;
 import dev.spacebod.aetherium.shaders.shaderpack.materialmap.BlockMaterialMapping;
 import dev.spacebod.aetherium.shaders.shaderpack.materialmap.BlockRenderType;
 import dev.spacebod.aetherium.shaders.shaderpack.materialmap.NamespacedId;
+import dev.spacebod.aetherium.shaders.shaderpack.preprocessor.JcppProcessor;
 import dev.spacebod.aetherium.shaders.shaderpack.preprocessor.PropertiesPreprocessor;
 import dev.spacebod.aetherium.shaders.shaderpack.programs.ProgramSource;
 import dev.spacebod.aetherium.shaders.shaderpack.properties.ProgramDirectives;
@@ -44,7 +45,7 @@ public final class PackParsingFixtures {
 		computeSamplerUsage();
 		propertyComments();
 		fragmentOutputScan();
-		defaultShadowBuffers();
+		defaultDrawBuffers();
 		customExpressions();
 		fractionalExpressions();
 		imageDeclarationsAndFeatures();
@@ -189,27 +190,66 @@ public final class PackParsingFixtures {
 		System.out.println("fragment outputs: empty placeholders use no targets; legacy and modern colour outputs kept");
 	}
 
-	/** Shadow programs can write a second colour output without a draw-buffer directive. */
-	private static void defaultShadowBuffers() {
-		String fragment = "void main() { gl_FragData[0] = vec4(1); gl_FragData[1] = vec4(0.5); }";
-		for (String name : List.of("shadow", "shadow_solid", "shadow_cutout", "shadow_water", "shadow_entities", "dh_shadow",
-				"gbuffers_terrain", "composite", "shadowcomp")) {
-			boolean shadow = List.of("shadow", "shadow_solid", "shadow_cutout", "shadow_water", "shadow_entities", "dh_shadow").contains(name);
-			for (int variant = 0; variant < 3; variant++) {
-				String text = switch (variant) {
-					case 1 -> "/* DRAWBUFFERS:10 */\n" + fragment;
-					case 2 -> "void main() { discard; }";
-					default -> fragment;
-				};
-				int[] expected = variant == 1 ? new int[]{1, 0} : variant == 2 ? new int[0] : shadow ? new int[]{0, 1} : new int[]{0};
-				var source = new ProgramSource(name,
-						"void main() { gl_Position = vec4(0); }", null, null, null, text, null, null, null);
-				if (!Arrays.equals(expected, source.getDirectives().getDrawBuffers())) {
-					throw new AssertionError(name + " lost its " + (variant == 1 ? "explicit" : "default") + " colour targets");
+	/** World placeholders reserve no colour targets; full-screen passes retain a drawable fallback. */
+	private static void defaultDrawBuffers() {
+		record Fragment(String source, int[] world, int[] shadow, int[] fullscreen) { }
+		int[] none = {};
+		int[] one = {0};
+		int[] two = {0, 1};
+		String disabled = JcppProcessor.glslPreprocessSource("#version 330\n#define COLOUR_ENABLED 0\nvoid main() {\n"
+				+ "#if COLOUR_ENABLED\ngl_FragData[0] = vec4(1);\n#endif\n}\n", List.of());
+		String second = "void main() { gl_FragData[0] = vec4(1); gl_FragData[1] = vec4(0.5); }";
+		List<Fragment> fragments = List.of(
+				new Fragment("void main() {}", none, none, one),
+				new Fragment("void main() { discard; }", none, none, one),
+				new Fragment("// gl_FragData[1] out\nvoid main() {}", none, none, one),
+				new Fragment("void main() { gl_FragDepth = 0.5; }", none, none, one),
+				new Fragment(disabled, none, none, one),
+				new Fragment("void main() { gl_FragColor = vec4(1); }", one, one, one),
+				new Fragment("void main() { gl_FragData[0] = vec4(1); }", one, one, one),
+				new Fragment("layout(location=0) out vec4 color; void main() { color=vec4(1); }", one, one, one),
+				new Fragment("out vec4 outColor0; void main() { outColor0=vec4(1); }", one, one, one),
+				new Fragment("/* gl_FragData[1] = vec4(1); */\nvoid main() { gl_FragColor=vec4(1); }", one, one, one),
+				new Fragment("/* layout(location=1) out vec4 ignored; */\nvoid main() { gl_FragColor=vec4(1); }", one, one, one),
+				new Fragment("layout(location=1) in vec2 uv; layout(location=0) out vec4 color;"
+						+ "void main() { color=vec4(uv, 0, 1); }", one, one, one),
+				new Fragment("void helper(out vec4 outColor1) { outColor1=vec4(1); }"
+						+ "void main() { gl_FragColor=vec4(1); }", one, one, one),
+				new Fragment("layout(location=0) out vec4 outColor1; void main() { outColor1=vec4(1); }", one, one, one),
+				new Fragment("layout(location=0,index=1) out vec4 color; void main() { color=vec4(1); }", one, one, one),
+				new Fragment(second, one, two, one),
+				new Fragment("#version 330\nlayout(location=0) out vec4 color; layout(location=1) out vec4 material;"
+						+ "void main() { color=vec4(1); material=vec4(0.5); }", one, two, one),
+				new Fragment("layout(index=0,location=1) out vec4 material; void main() { material=vec4(0.5); }", one, two, one),
+				new Fragment("out vec4 outColor0, outColor1; void main() { outColor0=vec4(1); outColor1=vec4(0.5); }", one, two, one),
+				new Fragment("layout(location=0) out vec4 colors[2]; void main() { colors[0]=vec4(1); colors[1]=vec4(0.5); }", one, two, one),
+				new Fragment("out vec4 color; out vec4 material; void main() { color=vec4(1); material=vec4(0.5); }", one, two, one),
+				new Fragment("layout(location=0) out vec4 color; out vec4 material; void main() { color=vec4(1); material=vec4(0.5); }", one, two, one),
+				new Fragment("out vec4 outColor2; void main() { outColor2=vec4(1); }", one, one, one),
+				new Fragment("/* DRAWBUFFERS:0 */\n" + second, one, one, one),
+				new Fragment("/* DRAWBUFFERS:10 */\n" + second, new int[]{1, 0}, new int[]{1, 0}, new int[]{1, 0}),
+				new Fragment("/* RENDERTARGETS:7,3 */\n" + second, new int[]{7, 3}, new int[]{7, 3}, new int[]{7, 3}),
+				new Fragment("/* DRAWBUFFERS:1 */\nvoid main() { discard; }", new int[]{1}, new int[]{1}, new int[]{1}));
+		List<String> worlds = List.of("gbuffers_basic", "gbuffers_terrain", "gbuffers_water", "dh_terrain", "dh_water", "dh_generic");
+		List<String> shadows = List.of("shadow", "shadow_solid", "shadow_cutout", "shadow_water", "shadow_entities", "dh_shadow");
+		List<String> fullscreen = List.of("begin", "prepare", "deferred", "composite", "composite3", "shadowcomp", "shadowcomp2", "final");
+		int checked = 0;
+		for (List<String> group : List.of(worlds, shadows, fullscreen)) {
+			for (String name : group) {
+				for (Fragment fragment : fragments) {
+					int[] expected = shadows.contains(name) ? fragment.shadow() : worlds.contains(name) ? fragment.world() : fragment.fullscreen();
+					var source = new ProgramSource(name, "void main() { gl_Position=vec4(0); }", null, null, null,
+							fragment.source(), null, null, null);
+					int[] actual = source.getDirectives().getDrawBuffers();
+					if (!Arrays.equals(expected, actual)) {
+						throw new AssertionError(name + " colour targets: expected " + Arrays.toString(expected) + ", got " + Arrays.toString(actual)
+								+ " for " + fragment.source());
+					}
+					checked++;
 				}
 			}
 		}
-		System.out.println("shadow outputs: implicit shadowcolor0/1 retained; explicit targets and empty placeholders preserved");
+		System.out.println("draw-buffer defaults: " + checked + " cases pass for disabled full-screen passes, world placeholders, shadow outputs and explicit overrides");
 	}
 
 	private static void customExpressions() {
