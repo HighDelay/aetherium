@@ -19,6 +19,7 @@ import dev.spacebod.aetherium.shaders.engine.UniformProviderFixtures;
 import dev.spacebod.aetherium.shaders.engine.WorldInterface;
 import dev.spacebod.aetherium.shaders.gl.blending.AlphaTests;
 import dev.spacebod.aetherium.shaders.pipeline.transform.PatchShaderType;
+import dev.spacebod.aetherium.shaders.pipeline.transform.lowering.ShadowFunctionFixtures;
 import dev.spacebod.aetherium.shaders.pipeline.transform.transformer.VanillaInterface;
 import dev.spacebod.aetherium.shaders.shaderpack.texture.TextureStage;
 import java.nio.ByteBuffer;
@@ -89,6 +90,7 @@ final class LoweringFixtures {
 	private static final String NL = "\n";
 
 	static void run() {
+		ShadowFunctionFixtures.run();
 		ShadowSampling.filterAllForCompileCheck();
 		// Storage writes allowed in every stage (the device features a pack's programs need).
 		dev.spacebod.aetherium.client.gpu.StorageFeatures.assumeForCompileCheck();
@@ -464,6 +466,61 @@ final class LoweringFixtures {
 					return z.variables() == 2 && z.undefs() == 0 && !SpirvInterface.reflect(spirv(z.words()), false).isEmpty();
 				}),
 				check("a stage that writes before reading is unchanged", r -> !dev.spacebod.aetherium.client.gpu.LocalZeroes.apply(r.words().get(V)).changed())));
+		out.add(new Fixture("compute: comparison helper without overload keeps its name", Kind.COMPUTE,
+				glsl("#version 430 core", "layout(local_size_x=1) in;", "uniform sampler2DShadow shadowtex0;",
+						"layout(rgba16f) uniform image2D colorimg;",
+						"float compareOnly(sampler2DShadow s, vec3 p) { return textureLod(s, p, 0.0); }",
+						"void main() { imageStore(colorimg, ivec2(0), vec4(compareOnly(shadowtex0, vec3(0.5)))); }"),
+				null, null, List.of(check("non-colliding declaration and calls retain their names", r ->
+						!r.sources().get(PatchShaderType.COMPUTE).contains("aeth_s_")
+						&& r.sources().get(PatchShaderType.COMPUTE).contains("compareOnly(")))));
+		out.add(new Fixture("compute: comparison helper accepts grouped sampler argument", Kind.COMPUTE,
+				glsl("#version 430 core", "layout(local_size_x=1) in;", "uniform sampler2DShadow shadowtex0;",
+						"layout(rgba16f) uniform image2D colorimg;",
+						"float compareOnly(sampler2DShadow s, vec3 p) { return textureLod(s, p, 0.0); }",
+						"void main() { imageStore(colorimg, ivec2(0), vec4(compareOnly((shadowtex0), vec3(0.5)))); }"),
+				null, null, List.of(check("grouped argument does not leave a renamed declaration behind", r ->
+						!r.sources().get(PatchShaderType.COMPUTE).contains("aeth_s_")))));
+		out.add(new Fixture("compute: different coordinate types do not collide", Kind.COMPUTE,
+				glsl("#version 430 core", "layout(local_size_x=1) in;", "uniform sampler2DShadow shadowtex0;", "uniform sampler2D depthtex0;",
+						"layout(rgba16f) uniform image2D colorimg;",
+						"float fetchDepth(sampler2DShadow s, vec3 p) { return textureLod(s, p, 0.0); }",
+						"float fetchDepth(sampler2D s, vec2 p) { return textureLod(s, p, 0.0).r; }",
+						"void main() { imageStore(colorimg, ivec2(0), vec4(fetchDepth(shadowtex0, vec3(0.5)), fetchDepth(depthtex0, vec2(0.5)), 0, 1)); }"),
+				null, null, List.of(check("other parameter types keep lowered overload signatures distinct", r ->
+						!r.sources().get(PatchShaderType.COMPUTE).contains("aeth_s_")))));
+		out.add(new Fixture("compute: prototype and definition are one comparison overload", Kind.COMPUTE,
+				glsl("#version 430 core", "layout(local_size_x=1) in;", "uniform sampler2DShadow shadowtex0;",
+						"layout(rgba16f) uniform image2D colorimg;", "float compareOnly(sampler2DShadow source, vec3 position);",
+						"float compareOnly(sampler2DShadow s, vec3 p) { return textureLod(s, p, 0.0); }",
+						"void main() { imageStore(colorimg, ivec2(0), vec4(compareOnly(shadowtex0, vec3(0.5)))); }"),
+				null, null, List.of(check("parameter names do not create an artificial overload collision", r ->
+						!r.sources().get(PatchShaderType.COMPUTE).contains("aeth_s_")))));
+		out.add(new Fixture("compute: different parameter array lengths do not collide", Kind.COMPUTE,
+				glsl("#version 430 core", "layout(local_size_x=1) in;", "uniform sampler2DShadow shadowtex0;", "uniform sampler2D depthtex0;",
+						"layout(rgba16f) uniform image2D colorimg;",
+						"float fetchDepth(sampler2DShadow s, vec3 p[1]) { return textureLod(s, p[0], 0.0); }",
+						"float fetchDepth(sampler2D s, vec3 p[2]) { return textureLod(s, p[1].xy, 0.0).r; }",
+						"void main() { vec3 a[1]=vec3[1](vec3(0.5)); vec3 b[2]=vec3[2](vec3(0.5),vec3(0.25));",
+						"imageStore(colorimg, ivec2(0), vec4(fetchDepth(shadowtex0,a),fetchDepth(depthtex0,b),0,1)); }"),
+				null, null, List.of(check("array dimensions remain part of the overload signature", r ->
+						!r.sources().get(PatchShaderType.COMPUTE).contains("aeth_s_")))));
+		out.add(new Fixture("compute: sampler erasure preserves numeric overload selection", Kind.COMPUTE,
+				glsl("#version 430 core", "layout(local_size_x=1) in;", "uniform sampler2DShadow shadowtex0;", "uniform sampler2D depthtex0;",
+						"layout(rgba16f) uniform image2D colorimg;",
+						"float pickDepth(sampler2DShadow s,float weight) { return textureLod(s,vec3(0.5),0.0)*weight; }",
+						"float pickDepth(sampler2D s,int offset) { return textureLod(s,vec2(0.5),0.0).r+float(offset); }",
+						"void main() { imageStore(colorimg,ivec2(0),vec4(pickDepth((shadowtex0),1),pickDepth(depthtex0,1),0,1)); }"),
+				null, null, List.of(check("integer-to-float conversion cannot select the ordinary depth overload after erasure", r ->
+						r.sources().get(PatchShaderType.COMPUTE).contains("aeth_s_pickDepth_0")))));
+		out.add(new Fixture("compute: numeric overloads with the same sampler kind keep names", Kind.COMPUTE,
+				glsl("#version 430 core", "layout(local_size_x=1) in;", "uniform sampler2DShadow shadowtex0;",
+						"layout(rgba16f) uniform image2D colorimg;",
+						"float pickDepth(sampler2DShadow s,float weight) { return textureLod(s,vec3(0.5),0.0)*weight; }",
+						"float pickDepth(sampler2DShadow s,int offset) { return textureLod(s,vec3(0.5),0.0)+float(offset); }",
+						"void main() { imageStore(colorimg,ivec2(0),vec4(pickDepth(shadowtex0,1),pickDepth(shadowtex0,0.5),0,1)); }"),
+				null, null, List.of(check("unchanged numeric overload resolution does not trigger a rename", r ->
+						!r.sources().get(PatchShaderType.COMPUTE).contains("aeth_s_")))));
 		out.add(new Fixture("compute: comparison and depth sampler overloads stay distinct", Kind.COMPUTE,
 				glsl("#version 430 core", "layout(local_size_x = 1) in;", "uniform sampler2DShadow shadowtex0;", "uniform sampler2D depthtex0;",
 						"layout(rgba16f) uniform image2D colorimg;",
@@ -474,6 +531,7 @@ final class LoweringFixtures {
 						"vec4(compareDepth(shadowtex0, p), sampleDepth(depthtex0, p), 0.0, 1.0)); }"),
 				null, null, List.of(check("both overloads and the nested comparison call compile", r ->
 						r.sources().get(PatchShaderType.COMPUTE).contains("aeth_s_sampleDepth_0")
+						&& !r.sources().get(PatchShaderType.COMPUTE).contains("aeth_s_compareDepth_0")
 						&& r.sources().get(PatchShaderType.COMPUTE).contains("aeth_shadowFiltered")))));
 		out.add(fullscreen("compatibility-era shadow2D",
 				glsl("#version 120", "varying vec2 texcoord;", "void main() { gl_Position = ftransform(); texcoord = gl_MultiTexCoord0.st; }"),
