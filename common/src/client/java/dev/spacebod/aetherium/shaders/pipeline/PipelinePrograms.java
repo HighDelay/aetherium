@@ -39,6 +39,9 @@ public final class PipelinePrograms {
 
 	private static final Map<RenderPipeline, Choice> MAIN = new IdentityHashMap<>();
 	private static final Map<RenderPipeline, ShaderKey> SHADOW = new IdentityHashMap<>();
+	/** Explicit registrations, separate from compatible copies cached in the lookup maps. */
+	private static final Set<RenderPipeline> MAIN_REGISTERED = Collections.newSetFromMap(new IdentityHashMap<>());
+	private static final Set<RenderPipeline> SHADOW_REGISTERED = Collections.newSetFromMap(new IdentityHashMap<>());
 	/** Pipelines already checked for compatible copies, without a match. */
 	private static final Set<RenderPipeline> MAIN_MISSES = Collections.newSetFromMap(new IdentityHashMap<>());
 	private static final Set<RenderPipeline> SHADOW_MISSES = Collections.newSetFromMap(new IdentityHashMap<>());
@@ -170,14 +173,16 @@ public final class PipelinePrograms {
 	}
 
 	private static void mainChoice(RenderPipeline pipeline, Choice choice) {
-		if (MAIN.put(pipeline, choice) == null) {
+		MAIN.put(pipeline, choice);
+		if (MAIN_REGISTERED.add(pipeline)) {
 			MAIN_ORDER.add(pipeline);
 			MAIN_MISSES.clear();
 		}
 	}
 
 	private static void shadow(RenderPipeline pipeline, ShaderKey key) {
-		if (SHADOW.put(pipeline, key) == null) {
+		SHADOW.put(pipeline, key);
+		if (SHADOW_REGISTERED.add(pipeline)) {
 			SHADOW_ORDER.add(pipeline);
 			SHADOW_MISSES.clear();
 		}
@@ -185,10 +190,10 @@ public final class PipelinePrograms {
 
 	/**
 	 * A terrain pipeline created after start-up (the chunk renderer's, one per terrain pass): drawn with {@code main} in
-	 * the main pass and {@code shadow} in the shadow pass. False when it was already known.
+	 * the main pass and {@code shadow} in the shadow pass. False when it was already explicitly registered.
 	 */
 	public static boolean addTerrain(RenderPipeline pipeline, ShaderKey main, ShaderKey shadow) {
-		if (MAIN.containsKey(pipeline)) {
+		if (MAIN_REGISTERED.contains(pipeline)) {
 			return false;
 		}
 		main(pipeline, main);
