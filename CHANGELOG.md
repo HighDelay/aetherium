@@ -24,8 +24,9 @@ and versions follow [Semantic Versioning](https://semver.org).
   Iteration's water, shadow and weather shaders no longer fail when their sampled colour is also named `tex`.
 - Geometry stage inputs and outputs use separate location ranges, avoiding excessive geometry output locations
   and device loss with SEUS PTGI HRR 3. Integer varyings carry matching flat interpolation in every stage.
-- Empty fragment placeholders no longer reserve a colour target, preserving all eight real world targets in
-  Alpha Piscium and Bliss. Inactive Distant Horizons programs do not reserve world targets.
+- Empty world fragment placeholders no longer reserve a colour target, preserving all eight real world targets in
+  Alpha Piscium and Bliss. Full-screen placeholders keep their primary target for safe render-pass sizing.
+  Inactive Distant Horizons programs do not reserve world targets.
 - Custom image declarations accept repeated whitespace and up to 32 images; Derivative's original release now
   retains all of its image bindings. Mixed-case block IDs and non-English property comments no longer abort or
   truncate pack material maps.
@@ -34,6 +35,10 @@ and versions follow [Semantic Versioning](https://semver.org).
 - Compatible target image formats use views of the same storage, including Alpha Piscium's RGBA8 clears of
   R32UI targets. Mutable formats are enabled only for targets a compute program accesses through a different
   compatible format. Invalid vector constants emitted by the shader optimizer trigger an unoptimized recompile.
+- Full-screen shaders accept explicit position and UV inputs alongside legacy built-ins, restoring IterationRP's
+  post-processing instead of leaving those inputs unbound.
+- Store-only compute programs with compatible normalized image declarations use the floating-point target's
+  format, preserving numeric values and preventing IterationRP's white screen.
 - Integer and boolean uniform providers convert to float when a pack declares a floating-point flag.
 - Custom uniform expressions support vector/scalar multiplication in either order, restoring MakeUp's TAA correction.
 - Iteration's End shaders accept matrix transpose and inverse expressions in their global initializers.
@@ -41,8 +46,10 @@ and versions follow [Semantic Versioning](https://semver.org).
   copies are no longer skipped for compute-only readers, restoring sunlight and light shafts in Alpha Piscium.
 - Vulkan pass barriers include geometry, tessellation and early depth-test accesses, keeping shader storage and
   depth writes visible to later passes.
-- Shadow programs without a draw-buffer directive write both shadowcolor0 and shadowcolor1, matching Iris's
-  default and retaining the second output used by SEUS's voxel lighting.
+- Default shadow draw buffers include shadowcolor1 only when the fragment shader exposes a second output,
+  retaining SEUS's voxel lighting without reserving an unused target.
+- Shadow colour textures used only as compute images are allocated even without render attachments, restoring
+  Rethinking Voxels' water waves.
 
 ## [0.1.1] - 2026-10-18
 
