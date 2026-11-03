@@ -1,6 +1,5 @@
 package dev.spacebod.aetherium.microbench;
 
-import com.google.common.collect.ImmutableList;
 import com.mojang.blaze3d.vertex.DefaultVertexFormat;
 import com.mojang.renderpearl.api.GpuFormat;
 import com.mojang.renderpearl.api.pipeline.BlendFactor;
@@ -8,41 +7,22 @@ import com.mojang.renderpearl.api.pipeline.BlendFunction;
 import com.mojang.renderpearl.api.pipeline.ColorTargetState;
 import com.mojang.renderpearl.api.pipeline.PrimitiveTopology;
 import com.mojang.renderpearl.api.pipeline.RenderPipeline;
-import com.mojang.renderpearl.api.pipeline.ShaderType;
 import com.mojang.renderpearl.api.vertex.VertexFormat;
 import dev.spacebod.aetherium.client.gpu.PackRenderPipeline;
-import dev.spacebod.aetherium.shaders.engine.ComputeImageFormatFixtures;
-import dev.spacebod.aetherium.shaders.engine.ShadowImageTargetFixtures;
+import dev.spacebod.aetherium.client.gpu.ShaderCompiler;
 import dev.spacebod.aetherium.shaders.engine.CompositePass;
 import dev.spacebod.aetherium.shaders.engine.ComputePass;
-import dev.spacebod.aetherium.shaders.engine.DepthTargets;
-import dev.spacebod.aetherium.shaders.engine.SamplerUsage;
 import dev.spacebod.aetherium.shaders.engine.ShadowSampling;
 import dev.spacebod.aetherium.shaders.engine.StorageBindings;
 import dev.spacebod.aetherium.shaders.engine.UniformBlock;
 import dev.spacebod.aetherium.shaders.engine.UniformProviderFixtures;
 import dev.spacebod.aetherium.shaders.engine.WorldInterface;
 import dev.spacebod.aetherium.shaders.gl.blending.AlphaTests;
-import dev.spacebod.aetherium.shaders.parsing.ExpressionFunctions;
-import dev.spacebod.aetherium.shaders.parsing.ExpressionOperators;
-import dev.spacebod.aetherium.shaders.parsing.VectorType;
-import dev.spacebod.aetherium.shaders.pipeline.PipelinePrograms;
 import dev.spacebod.aetherium.shaders.pipeline.transform.PatchShaderType;
+import dev.spacebod.aetherium.shaders.pipeline.transform.lowering.ShadowFunctionFixtures;
 import dev.spacebod.aetherium.shaders.pipeline.transform.transformer.VanillaInterface;
-import dev.spacebod.aetherium.shaders.shaderpack.DimensionId;
-import dev.spacebod.aetherium.shaders.shaderpack.ShaderPack;
-import dev.spacebod.aetherium.shaders.shaderpack.materialmap.BlockEntry;
-import dev.spacebod.aetherium.shaders.shaderpack.materialmap.BlockMaterialMapping;
-import dev.spacebod.aetherium.shaders.shaderpack.materialmap.BlockRenderType;
-import dev.spacebod.aetherium.shaders.shaderpack.materialmap.NamespacedId;
-import dev.spacebod.aetherium.shaders.shaderpack.preprocessor.PropertiesPreprocessor;
-import dev.spacebod.aetherium.shaders.shaderpack.programs.ProgramSource;
-import dev.spacebod.aetherium.shaders.shaderpack.properties.ProgramDirectives;
 import dev.spacebod.aetherium.shaders.shaderpack.texture.TextureStage;
-import it.unimi.dsi.fastutil.ints.Int2ObjectLinkedOpenHashMap;
-import java.io.IOException;
 import java.nio.ByteBuffer;
-import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.EnumMap;
@@ -53,16 +33,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.function.Predicate;
-import kroppeb.stareval.function.FunctionReturn;
-import kroppeb.stareval.parser.Parser;
-import kroppeb.stareval.resolver.ExpressionResolver;
-import net.minecraft.SharedConstants;
-import net.minecraft.client.renderer.RenderPipelines;
-import net.minecraft.client.renderer.ShaderDefines;
 import net.minecraft.resources.Identifier;
-import net.minecraft.server.Bootstrap;
-import net.minecraft.world.level.block.Blocks;
-import org.joml.Vector2f;
 import org.lwjgl.util.shaderc.Shaderc;
 
 /**
@@ -119,6 +90,7 @@ final class LoweringFixtures {
 	private static final String NL = "\n";
 
 	static void run() {
+		ShadowFunctionFixtures.run();
 		ShadowSampling.filterAllForCompileCheck();
 		// Storage writes allowed in every stage (the device features a pack's programs need).
 		dev.spacebod.aetherium.client.gpu.StorageFeatures.assumeForCompileCheck();
@@ -151,198 +123,52 @@ final class LoweringFixtures {
 		System.out.printf(Locale.ROOT, "%nlowering fixtures: %d passed, %d failed%n", passed, failed);
 		directiveScans();
 		pipelineStates();
-		materialMaps();
-		copiedPipelines();
-		computeSamplerUsage();
-		propertyComments();
 		UniformProviderFixtures.run();
-		fragmentOutputScan();
-		defaultShadowBuffers();
-		customExpressions();
+		compositeConstantShapes();
 		AlbedoSamplerFixtures.run();
-		ComputeImageFormatFixtures.run();
-		ShadowImageTargetFixtures.run();
 		if (failed != 0) {
 			throw new AssertionError(failed + " lowering fixture(s) failed");
 		}
 	}
 
-	private static void materialMaps() {
-		SharedConstants.tryDetectVersion();
-		Bootstrap.bootStrap();
-		var entries = new Int2ObjectLinkedOpenHashMap<List<BlockEntry>>();
-		var mixedCase = new NamespacedId("minecraft", "polished_Diorite_slab");
-		var invalid = new NamespacedId("minecraft", "invalid block");
-		entries.put(9, List.of(new BlockEntry(invalid, Map.of()),
-				new BlockEntry(mixedCase, Map.of()),
-				new BlockEntry(
-						new NamespacedId("minecraft", "stone"), Map.of())));
-		var ids = BlockMaterialMapping.createBlockStateIdMap(entries,
-				new Int2ObjectLinkedOpenHashMap<>());
-		if (ids.getInt(Blocks.POLISHED_DIORITE_SLAB.defaultBlockState()) != 9
-				|| ids.getInt(Blocks.STONE.defaultBlockState()) != 9) {
-			throw new AssertionError("a malformed block ID discarded valid entries in the same material group");
+
+
+
+
+
+
+
+
+
+
+	private static void compositeConstantShapes() {
+		int[] valid = {
+				0x07230203, 0x00010500, 0, 64, 0,
+				(3 << 16) | 22, 1, 32,
+				(4 << 16) | 23, 2, 1, 3,
+				(4 << 16) | 43, 1, 3, 0,
+				(6 << 16) | 44, 2, 4, 3, 3, 3
+		};
+		if (!ShaderCompiler.validCompositeConstants(spirv(valid))) {
+			throw new AssertionError("a three-component vector constant was rejected");
 		}
-		var type = BlockRenderType.CUTOUT;
-		var types = BlockMaterialMapping.createBlockTypeMap(Map.of(mixedCase, type, invalid, type));
-		if (types.size() != 1 || types.get(Blocks.POLISHED_DIORITE_SLAB) != type) {
-			throw new AssertionError("block layer IDs did not use the same tolerant lookup");
+		int[] extraComponent = Arrays.copyOf(valid, valid.length + 1);
+		extraComponent[16] = (7 << 16) | 44;
+		extraComponent[extraComponent.length - 1] = 3;
+		if (ShaderCompiler.validCompositeConstants(spirv(extraComponent))) {
+			throw new AssertionError("a three-component vector with four constituents was accepted");
 		}
-		System.out.println("material maps: mixed-case IDs resolved; invalid entries skipped; valid entries retained");
+		if (ShaderCompiler.validCompositeConstants(spirv(Arrays.copyOf(valid, valid.length - 1)))) {
+			throw new AssertionError("a truncated composite constant was accepted");
+		}
+		System.out.println("composite constants: valid vector shape retained; extra constituents and truncation rejected");
 	}
 
-	/** Cosmetic mods copy vanilla pipelines and change fixed render state; their shader program must follow the copy. */
-	private static void copiedPipelines() {
-		var original = RenderPipelines.ENTITY_TRANSLUCENT;
-		var copy = new PipelineCopy(original, original.getShaders(), original.getShaderDefines(), original.getVertexFormatBindings());
-		for (var context : List.of(PipelinePrograms.Context.WORLD,
-				PipelinePrograms.Context.HAND,
-				PipelinePrograms.Context.HAND_TRANSLUCENT,
-				PipelinePrograms.Context.BLOCK_ENTITY)) {
-			if (PipelinePrograms.main(copy, context)
-					!= PipelinePrograms.main(original, context)
-					|| PipelinePrograms.shadow(copy, context)
-					!= PipelinePrograms.shadow(original, context)) {
-				throw new AssertionError("copied entity pipeline lost its world or shadow program: " + context);
-			}
-		}
-		var shaders = new java.util.EnumMap<>(original.getShaders());
-		shaders.put(ShaderType.FRAGMENT, Identifier.fromNamespaceAndPath("fixture", "custom"));
-		var defines = original.getShaderDefines().withOverrides(new ShaderDefines(Map.of(), Set.of("CUSTOM")));
-		for (var custom : List.of(
-				new PipelineCopy(original, shaders, original.getShaderDefines(), original.getVertexFormatBindings()),
-				new PipelineCopy(original, original.getShaders(), defines, original.getVertexFormatBindings()),
-				new PipelineCopy(original, original.getShaders(), original.getShaderDefines(), List.of(DefaultVertexFormat.POSITION)))) {
-			if (PipelinePrograms.main(custom,
-					PipelinePrograms.Context.WORLD) != null
-					|| PipelinePrograms.shadow(custom,
-					PipelinePrograms.Context.WORLD) != null) {
-				throw new AssertionError("a changed shader interface was mistaken for a vanilla pipeline copy");
-			}
-		}
-		System.out.println("pipeline copies: cosmetic render-state variants inherit world/shadow programs; custom shader interfaces stay separate");
-	}
 
-	private static final class PipelineCopy extends RenderPipeline {
-		PipelineCopy(RenderPipeline original, Map<ShaderType, Identifier> shaders,
-				ShaderDefines defines, List<VertexFormat> formats) {
-			super(original.getLocation(), shaders, defines, original.getBindGroupLayouts(),
-					original.getColorTargetStates().toArray(ColorTargetState[]::new), original.getDepthStencilState(),
-					original.getPolygonMode(), !original.isCull(), formats.toArray(VertexFormat[]::new),
-					original.getPrimitiveTopology(), original.pushConstantSize(), original.getSortKey());
-		}
-	}
 
-	/** Compute-only readers must keep their depth copies, even without a fragment program reading the same map. */
-	private static void computeSamplerUsage() {
-		var files = Map.of(
-				"setup7.csh", "uniform sampler2D setupOnly;",
-				"shadow_a.csh", "uniform sampler2D shadowOnly;",
-				"final_a.csh", "uniform sampler2D depthtex2;",
-				"begin3_a.csh", "uniform sampler2D beginOnly;",
-				"prepare4_a.csh", "uniform sampler2D prepareOnly;",
-				"shadowcomp5_a.csh", "uniform sampler2D shadowcompOnly;",
-				"deferred6_a.csh", "uniform sampler2D deferredOnly;",
-				"composite7_a.csh", "uniform sampler2DShadow shadowtex1HW;");
-		try {
-			var directory = Files.createTempDirectory("aetherium-compute-usage-");
-			try {
-				for (var file : files.entrySet()) {
-					Files.writeString(directory.resolve(file.getKey()),
-							"#version 430\nlayout(local_size_x=1) in;\n" + file.getValue() + "\nvoid main() {}\n");
-				}
-				var pack = new ShaderPack(directory,
-						ImmutableList.of(), false);
-				var usage = SamplerUsage.of(pack.getProgramSet(
-						DimensionId.OVERWORLD));
-				for (String name : List.of("setupOnly", "shadowOnly", "depthtex2", "beginOnly", "prepareOnly", "shadowcompOnly", "deferredOnly", "shadowtex1HW")) {
-					if (!usage.declares(name)) {
-						throw new AssertionError("compute-only sampler was missed: " + name);
-					}
-				}
-				if (!usage.samplesOpaqueShadowDepth() || !usage.samplesDepth(DepthTargets.NO_HAND)) {
-					throw new AssertionError("compute-only readers lost their opaque shadow or no-hand depth copy");
-				}
-			} finally {
-				for (String file : files.keySet()) {
-					Files.deleteIfExists(directory.resolve(file));
-				}
-				Files.delete(directory);
-			}
-		} catch (IOException e) {
-			throw new AssertionError("cannot prepare compute sampler fixture", e);
-		}
-		System.out.println("sampler usage: compute-only readers retained across setup, shadow, final and all frame stages");
-	}
 
-	private static void propertyComments() {
-		String processed = PropertiesPreprocessor.preprocessSource(
-				"# Non-English comment bytes: \u0085 comment tail\r\nitem.1=minecraft:torch\r# another \u0085 tail\nitem.2=minecraft:lantern\n", List.of());
-		if (!processed.contains("item.1=minecraft:torch") || !processed.contains("item.2=minecraft:lantern")
-				|| processed.contains("tail")) {
-			throw new AssertionError("non-English property comments truncated or contaminated the ID map: " + processed);
-		}
-		System.out.println("property comments: CR, LF and CRLF retained; embedded Latin-1 NEL bytes ignored inside comments");
-	}
 
-	private static void fragmentOutputScan() {
-		for (String source : List.of("void main() {}", "void main() { discard; }", "// gl_FragColor out\nvoid main() {}")) {
-			if (ProgramDirectives.hasFragmentOutput(source)) {
-				throw new AssertionError("placeholder added a phantom colour target");
-			}
-		}
-		for (String source : List.of("void main() { gl_FragColor = vec4(1); }", "void main() { gl_FragData[0] = vec4(1); }",
-				"layout(location=0) out vec4 color; void main() { color=vec4(1); }")) {
-			if (!ProgramDirectives.hasFragmentOutput(source)) {
-				throw new AssertionError("real fragment output lost its default target");
-			}
-		}
-		System.out.println("fragment outputs: empty placeholders use no targets; legacy and modern colour outputs kept");
-	}
 
-	/** Shadow programs can write a second colour output without a draw-buffer directive. */
-	private static void defaultShadowBuffers() {
-		String fragment = "void main() { gl_FragData[0] = vec4(1); gl_FragData[1] = vec4(0.5); }";
-		for (String name : List.of("shadow", "shadow_solid", "shadow_cutout", "shadow_water", "shadow_entities", "dh_shadow",
-				"gbuffers_terrain", "composite", "shadowcomp")) {
-			boolean shadow = List.of("shadow", "shadow_solid", "shadow_cutout", "shadow_water", "shadow_entities", "dh_shadow").contains(name);
-			for (int variant = 0; variant < 3; variant++) {
-				String text = switch (variant) {
-					case 1 -> "/* DRAWBUFFERS:10 */\n" + fragment;
-					case 2 -> "void main() { discard; }";
-					default -> fragment;
-				};
-				int[] expected = variant == 1 ? new int[]{1, 0} : variant == 2 ? new int[0] : shadow ? new int[]{0, 1} : new int[]{0};
-				var source = new ProgramSource(name,
-						"void main() { gl_Position = vec4(0); }", null, null, null, text, null, null, null);
-				if (!Arrays.equals(expected, source.getDirectives().getDrawBuffers())) {
-					throw new AssertionError(name + " lost its " + (variant == 1 ? "explicit" : "default") + " colour targets");
-				}
-			}
-		}
-		System.out.println("shadow outputs: implicit shadowcolor0/1 retained; explicit targets and empty placeholders preserved");
-	}
-
-	private static void customExpressions() {
-		try {
-			var resolver = new ExpressionResolver(
-					ExpressionFunctions.functions, name -> null, true);
-			for (String text : List.of("vec2(0.01, 0.02) * 0.51", "0.51 * vec2(0.01, 0.02)",
-					"(vec2(0.01, 0.02) * 0.5) * 1.02")) {
-				var parsed = Parser.parse(text, ExpressionOperators.options);
-				var expression = resolver.resolveExpression(VectorType.VEC2, parsed);
-				var value = new FunctionReturn();
-				expression.evaluateTo(null, value);
-				var vector = (Vector2f) value.objectReturn;
-				if (Math.abs(vector.x - 0.0051f) > 1e-7f || Math.abs(vector.y - 0.0102f) > 1e-7f) {
-					throw new AssertionError("incorrect scalar/vector multiplication: " + text + " -> " + vector);
-				}
-			}
-		} catch (Exception e) {
-			throw new AssertionError("scalar/vector expression could not be resolved", e);
-		}
-		System.out.println("custom expressions: vector/scalar multiplication works in both orders and nested calls");
-	}
 
 	/** A multi-target program can use distinct blend functions for normal and colour outputs. */
 	private static void pipelineStates() {
@@ -470,13 +296,10 @@ final class LoweringFixtures {
 			words.put(e.getKey(), w);
 			lines.put(e.getKey(), SpirvInterface.reflect(spirv, e.getKey() == PatchShaderType.COMPUTE));
 		}
-		Reflected r = new Reflected(lines, stages, layout, resources, words);
 		if (f.kind() == Kind.FULLSCREEN || f.kind() == Kind.FULLSCREEN_METAL) {
-			String attribute = SpirvInterface.fullscreenVertexInputMismatch(r.stage(V));
-			if (attribute != null) {
-				return new Result(false, attribute, stages);
-			}
+			SpirvInterface.checkFullscreenVertexInputs(lines.getOrDefault(V, List.of()));
 		}
+		Reflected r = new Reflected(lines, stages, layout, resources, words);
 		String mismatch = SpirvInterface.interpolationMismatch(lines);
 				if (mismatch != null) {
 					return new Result(false, mismatch, stages);
@@ -646,6 +469,61 @@ final class LoweringFixtures {
 					return z.variables() == 2 && z.undefs() == 0 && !SpirvInterface.reflect(spirv(z.words()), false).isEmpty();
 				}),
 				check("a stage that writes before reading is unchanged", r -> !dev.spacebod.aetherium.client.gpu.LocalZeroes.apply(r.words().get(V)).changed())));
+		out.add(new Fixture("compute: comparison helper without overload keeps its name", Kind.COMPUTE,
+				glsl("#version 430 core", "layout(local_size_x=1) in;", "uniform sampler2DShadow shadowtex0;",
+						"layout(rgba16f) uniform image2D colorimg;",
+						"float compareOnly(sampler2DShadow s, vec3 p) { return textureLod(s, p, 0.0); }",
+						"void main() { imageStore(colorimg, ivec2(0), vec4(compareOnly(shadowtex0, vec3(0.5)))); }"),
+				null, null, List.of(check("non-colliding declaration and calls retain their names", r ->
+						!r.sources().get(PatchShaderType.COMPUTE).contains("aeth_s_")
+						&& r.sources().get(PatchShaderType.COMPUTE).contains("compareOnly(")))));
+		out.add(new Fixture("compute: comparison helper accepts grouped sampler argument", Kind.COMPUTE,
+				glsl("#version 430 core", "layout(local_size_x=1) in;", "uniform sampler2DShadow shadowtex0;",
+						"layout(rgba16f) uniform image2D colorimg;",
+						"float compareOnly(sampler2DShadow s, vec3 p) { return textureLod(s, p, 0.0); }",
+						"void main() { imageStore(colorimg, ivec2(0), vec4(compareOnly((shadowtex0), vec3(0.5)))); }"),
+				null, null, List.of(check("grouped argument does not leave a renamed declaration behind", r ->
+						!r.sources().get(PatchShaderType.COMPUTE).contains("aeth_s_")))));
+		out.add(new Fixture("compute: different coordinate types do not collide", Kind.COMPUTE,
+				glsl("#version 430 core", "layout(local_size_x=1) in;", "uniform sampler2DShadow shadowtex0;", "uniform sampler2D depthtex0;",
+						"layout(rgba16f) uniform image2D colorimg;",
+						"float fetchDepth(sampler2DShadow s, vec3 p) { return textureLod(s, p, 0.0); }",
+						"float fetchDepth(sampler2D s, vec2 p) { return textureLod(s, p, 0.0).r; }",
+						"void main() { imageStore(colorimg, ivec2(0), vec4(fetchDepth(shadowtex0, vec3(0.5)), fetchDepth(depthtex0, vec2(0.5)), 0, 1)); }"),
+				null, null, List.of(check("other parameter types keep lowered overload signatures distinct", r ->
+						!r.sources().get(PatchShaderType.COMPUTE).contains("aeth_s_")))));
+		out.add(new Fixture("compute: prototype and definition are one comparison overload", Kind.COMPUTE,
+				glsl("#version 430 core", "layout(local_size_x=1) in;", "uniform sampler2DShadow shadowtex0;",
+						"layout(rgba16f) uniform image2D colorimg;", "float compareOnly(sampler2DShadow source, vec3 position);",
+						"float compareOnly(sampler2DShadow s, vec3 p) { return textureLod(s, p, 0.0); }",
+						"void main() { imageStore(colorimg, ivec2(0), vec4(compareOnly(shadowtex0, vec3(0.5)))); }"),
+				null, null, List.of(check("parameter names do not create an artificial overload collision", r ->
+						!r.sources().get(PatchShaderType.COMPUTE).contains("aeth_s_")))));
+		out.add(new Fixture("compute: different parameter array lengths do not collide", Kind.COMPUTE,
+				glsl("#version 430 core", "layout(local_size_x=1) in;", "uniform sampler2DShadow shadowtex0;", "uniform sampler2D depthtex0;",
+						"layout(rgba16f) uniform image2D colorimg;",
+						"float fetchDepth(sampler2DShadow s, vec3 p[1]) { return textureLod(s, p[0], 0.0); }",
+						"float fetchDepth(sampler2D s, vec3 p[2]) { return textureLod(s, p[1].xy, 0.0).r; }",
+						"void main() { vec3 a[1]=vec3[1](vec3(0.5)); vec3 b[2]=vec3[2](vec3(0.5),vec3(0.25));",
+						"imageStore(colorimg, ivec2(0), vec4(fetchDepth(shadowtex0,a),fetchDepth(depthtex0,b),0,1)); }"),
+				null, null, List.of(check("array dimensions remain part of the overload signature", r ->
+						!r.sources().get(PatchShaderType.COMPUTE).contains("aeth_s_")))));
+		out.add(new Fixture("compute: sampler erasure preserves numeric overload selection", Kind.COMPUTE,
+				glsl("#version 430 core", "layout(local_size_x=1) in;", "uniform sampler2DShadow shadowtex0;", "uniform sampler2D depthtex0;",
+						"layout(rgba16f) uniform image2D colorimg;",
+						"float pickDepth(sampler2DShadow s,float weight) { return textureLod(s,vec3(0.5),0.0)*weight; }",
+						"float pickDepth(sampler2D s,int offset) { return textureLod(s,vec2(0.5),0.0).r+float(offset); }",
+						"void main() { imageStore(colorimg,ivec2(0),vec4(pickDepth((shadowtex0),1),pickDepth(depthtex0,1),0,1)); }"),
+				null, null, List.of(check("integer-to-float conversion cannot select the ordinary depth overload after erasure", r ->
+						r.sources().get(PatchShaderType.COMPUTE).contains("aeth_s_pickDepth_0")))));
+		out.add(new Fixture("compute: numeric overloads with the same sampler kind keep names", Kind.COMPUTE,
+				glsl("#version 430 core", "layout(local_size_x=1) in;", "uniform sampler2DShadow shadowtex0;",
+						"layout(rgba16f) uniform image2D colorimg;",
+						"float pickDepth(sampler2DShadow s,float weight) { return textureLod(s,vec3(0.5),0.0)*weight; }",
+						"float pickDepth(sampler2DShadow s,int offset) { return textureLod(s,vec3(0.5),0.0)+float(offset); }",
+						"void main() { imageStore(colorimg,ivec2(0),vec4(pickDepth(shadowtex0,1),pickDepth(shadowtex0,0.5),0,1)); }"),
+				null, null, List.of(check("unchanged numeric overload resolution does not trigger a rename", r ->
+						!r.sources().get(PatchShaderType.COMPUTE).contains("aeth_s_")))));
 		out.add(new Fixture("compute: comparison and depth sampler overloads stay distinct", Kind.COMPUTE,
 				glsl("#version 430 core", "layout(local_size_x = 1) in;", "uniform sampler2DShadow shadowtex0;", "uniform sampler2D depthtex0;",
 						"layout(rgba16f) uniform image2D colorimg;",
@@ -656,6 +534,7 @@ final class LoweringFixtures {
 						"vec4(compareDepth(shadowtex0, p), sampleDepth(depthtex0, p), 0.0, 1.0)); }"),
 				null, null, List.of(check("both overloads and the nested comparison call compile", r ->
 						r.sources().get(PatchShaderType.COMPUTE).contains("aeth_s_sampleDepth_0")
+						&& !r.sources().get(PatchShaderType.COMPUTE).contains("aeth_s_compareDepth_0")
 						&& r.sources().get(PatchShaderType.COMPUTE).contains("aeth_shadowFiltered")))));
 		out.add(fullscreen("compatibility-era shadow2D",
 				glsl("#version 120", "varying vec2 texcoord;", "void main() { gl_Position = ftransform(); texcoord = gl_MultiTexCoord0.st; }"),

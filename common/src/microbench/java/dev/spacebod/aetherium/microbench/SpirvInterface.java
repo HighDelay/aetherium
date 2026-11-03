@@ -111,6 +111,14 @@ final class SpirvInterface {
 		return null;
 	}
 
+	/** Check full-screen fixtures against the buffer format also checked by the pack sweep. */
+	static void checkFullscreenVertexInputs(List<String> vertex) {
+		String mismatch = fullscreenVertexInputMismatch(vertex);
+		if (mismatch != null) {
+			throw new AssertionError(mismatch);
+		}
+	}
+
 	/** The frontend checks interpolation across stages after compiling each module separately. */
 	static String interpolationMismatch(Map<PatchShaderType, List<String>> stages) {
 		var producer = stages.getOrDefault(stages.containsKey(PatchShaderType.GEOMETRY) ? PatchShaderType.GEOMETRY : PatchShaderType.VERTEX, List.of());

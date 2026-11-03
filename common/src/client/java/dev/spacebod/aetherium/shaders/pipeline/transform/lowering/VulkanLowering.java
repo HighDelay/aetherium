@@ -31,6 +31,7 @@ import io.github.douira.glsl_transformer.ast.node.expression.binary.SubtractionA
 import io.github.douira.glsl_transformer.ast.node.expression.binary.EqualityExpression;
 import io.github.douira.glsl_transformer.ast.node.expression.binary.InequalityExpression;
 import io.github.douira.glsl_transformer.ast.node.expression.unary.FunctionCallExpression;
+import io.github.douira.glsl_transformer.ast.node.expression.unary.GroupingExpression;
 import io.github.douira.glsl_transformer.ast.node.expression.unary.DecrementPostfixExpression;
 import io.github.douira.glsl_transformer.ast.node.expression.unary.DecrementPrefixExpression;
 import io.github.douira.glsl_transformer.ast.node.expression.unary.IncrementPostfixExpression;
@@ -2284,7 +2285,9 @@ public final class VulkanLowering {
 		if (emulated.isEmpty() && !hardware.isEmpty()) {
 			return; // function parameters keep their comparison type
 		}
-		shadowFunctionNames(tree, root);
+		if (shadowParameters && shadowFunctionNames(tree, root)) {
+			notes.add("comparison-sampler overloads renamed where lowering changes their binding");
+		}
 		Map<String, Boolean> globalsFiltered = new HashMap<>();
 		for (Global g : emulated) {
 			int map = ShadowSampling.depthIndex(g.name(), watershadow);
@@ -2352,10 +2355,39 @@ public final class VulkanLowering {
 	}
 
 	/** Keep sampler2DShadow overloads distinct when comparison samplers become ordinary sampler2D values. */
-	private void shadowFunctionNames(TranslationUnit tree, Root root) {
+	static boolean shadowFunctionNames(TranslationUnit tree, Root root) {
+		Map<String, List<FunctionPrototype>> overloads = new HashMap<>();
+		Set<String> comparisonFunctions = new HashSet<>();
+		for (FunctionPrototype function : root.nodeIndex.get(FunctionPrototype.class)) {
+			String name = function.getName().getName();
+			overloads.computeIfAbsent(name, key -> new ArrayList<>()).add(function);
+			for (FunctionParameter parameter : function.getParameters()) {
+				if (parameter.getType().getTypeSpecifier() instanceof BuiltinFixedTypeSpecifier fixed && fixed.type == BuiltinType.SAMPLER2DSHADOW) {
+					comparisonFunctions.add(name);
+					break;
+				}
+			}
+		}
+		Set<String> collisions = new HashSet<>();
+		for (String name : comparisonFunctions) {
+			List<FunctionPrototype> candidates = overloads.get(name);
+			for (int i = 0; i < candidates.size(); i++) {
+				for (int j = i + 1; j < candidates.size(); j++) {
+					if (shadowOverloadsCollide(candidates.get(i), candidates.get(j))) {
+						collisions.add(name);
+					}
+				}
+			}
+		}
+		if (collisions.isEmpty()) {
+			return false;
+		}
 		Map<String, List<FunctionPrototype>> functions = new HashMap<>();
 		Map<FunctionPrototype, String> renamed = new IdentityHashMap<>();
 		for (FunctionPrototype function : root.nodeIndex.get(FunctionPrototype.class)) {
+			if (!collisions.contains(function.getName().getName())) {
+				continue;
+			}
 			List<String> indices = new ArrayList<>();
 			for (int i = 0; i < function.getParameters().size(); i++) {
 				if (typeName(function.getParameters().get(i).getType().getTypeSpecifier()).equals("sampler2DShadow")) {
@@ -2369,7 +2401,7 @@ public final class VulkanLowering {
 			}
 		}
 		if (renamed.isEmpty()) {
-			return;
+			return false;
 		}
 		Map<String, String> globals = new HashMap<>();
 		for (Global g : globals(tree)) {
@@ -2409,7 +2441,57 @@ public final class VulkanLowering {
 			}
 		}
 		renamed.forEach((function, name) -> function.getName().setName(name));
-		notes.add("comparison-sampler functions renamed before their samplers are lowered");
+		return true;
+	}
+
+	/** Sampler erasure can merge signatures or change which numeric overload a call selects. */
+	private static boolean shadowOverloadsCollide(FunctionPrototype left, FunctionPrototype right) {
+		if (left.getParameters().size() != right.getParameters().size()) {
+			return false;
+		}
+		List<String> leftTypes = shadowParameterTypes(left, false);
+		List<String> rightTypes = shadowParameterTypes(right, false);
+		List<String> loweredLeft = shadowParameterTypes(left, true);
+		List<String> loweredRight = shadowParameterTypes(right, true);
+		boolean samplerErased = false;
+		for (int i = 0; i < leftTypes.size(); i++) {
+			if (leftTypes.get(i).equals(rightTypes.get(i))) {
+				continue;
+			}
+			if (loweredLeft.get(i).equals(loweredRight.get(i))) {
+				samplerErased = true;
+				continue;
+			}
+			FunctionParameter a = left.getParameters().get(i);
+			FunctionParameter b = right.getParameters().get(i);
+			if (!(a.getType().getTypeSpecifier() instanceof BuiltinNumericTypeSpecifier at)
+					|| !(b.getType().getTypeSpecifier() instanceof BuiltinNumericTypeSpecifier bt)
+					|| at.getArraySpecifier() != null || bt.getArraySpecifier() != null
+					|| a.getArraySpecifier() != null || b.getArraySpecifier() != null
+					|| has(a.getType().getTypeQualifier(), StorageType.OUT) || has(a.getType().getTypeQualifier(), StorageType.INOUT)
+					|| has(b.getType().getTypeQualifier(), StorageType.OUT) || has(b.getType().getTypeQualifier(), StorageType.INOUT)
+					|| !at.type.getImplicitCasts().contains(bt.type) && !bt.type.getImplicitCasts().contains(at.type)) {
+				return false;
+			}
+		}
+		return samplerErased;
+	}
+
+	/** Parameter types determine overload identity; names and precision/storage qualifiers do not. */
+	private static List<String> shadowParameterTypes(FunctionPrototype function, boolean lowered) {
+		List<String> types = new ArrayList<>();
+		for (FunctionParameter parameter : function.getParameters()) {
+			TypeSpecifier specifier = parameter.getType().getTypeSpecifier();
+			String type = print(specifier);
+			if (lowered && specifier instanceof BuiltinFixedTypeSpecifier fixed && fixed.type == BuiltinType.SAMPLER2DSHADOW) {
+				type = type.replaceFirst("sampler2DShadow", "sampler2D");
+			}
+			if (parameter.getArraySpecifier() != null) {
+				type += print(parameter.getArraySpecifier());
+			}
+			types.add(type.replaceAll("\\s+", ""));
+		}
+		return types;
 	}
 
 	private static void retype(BuiltinFixedTypeSpecifier fixed) {
@@ -2420,6 +2502,9 @@ public final class VulkanLowering {
 
 	/** The variable an expression names ({@code s}, {@code s[i]}), or null. */
 	private static @Nullable String baseName(Expression expression) {
+		if (expression instanceof GroupingExpression grouping) {
+			return baseName(grouping.getOperand());
+		}
 		if (expression instanceof ReferenceExpression ref) {
 			return ref.getIdentifier().getName();
 		}

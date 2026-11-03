@@ -77,13 +77,13 @@ public final class ComputePass implements AutoCloseable {
 	private final long[] sets = new long[SLOTS];
 	private final int blockSize;
 	private final int uniformStride;
-	private final Map<String, GpuFormat> imageFormats;
-	private final TargetImageViews targetViews;
 	private final long uniformBuffer;
 	private final long uniformAllocation;
 	private final ByteBuffer uniformMemory;
 	private final TextureStage stage;
 	private int slot;
+	private final Map<String, GpuFormat> imageFormats;
+	private final TargetImageViews targetViews;
 
 	private ComputePass(String name, TextureStage stage, VulkanDevice vulkan, BlockProgramUniforms uniforms, List<String> samplers, int[] localSize,
 			@Nullable Vector3i workGroups, Vector2f workGroupRelative, @Nullable IndirectPointer indirect, long setLayout, long layout, long pipeline,
@@ -101,9 +101,9 @@ public final class ComputePass implements AutoCloseable {
 		this.setLayout = setLayout;
 		this.layout = layout;
 		this.pipeline = pipeline;
-		this.blockSize = blockSize;
 		this.targetViews = new TargetImageViews(vulkan);
 		this.imageFormats = TargetImageViews.formats(glsl);
+		this.blockSize = blockSize;
 		int alignment = Math.max(16, vulkan.getDeviceInfo().limits().minUniformOffsetAlignment());
 		this.uniformStride = (Math.max(16, blockSize) + alignment - 1) / alignment * alignment;
 		try (MemoryStack stack = MemoryStack.stackPush()) {

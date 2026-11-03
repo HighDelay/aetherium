@@ -6,6 +6,10 @@ public final class ShadowImageTargetFixtures {
 	private ShadowImageTargetFixtures() {
 	}
 
+	public static void main(String[] args) {
+		run();
+	}
+
 	public static void run() {
 		record Case(String source, int minimum, int expected) { }
 		List<Case> cases = List.of(

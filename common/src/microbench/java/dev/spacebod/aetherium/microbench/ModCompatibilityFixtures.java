@@ -31,6 +31,7 @@ public final class ModCompatibilityFixtures {
 		copiedPipelines();
 		cachedMisses();
 		lateTerrainRegistration();
+		cachedCopyTerrainRegistration();
 		lodFallback();
 	}
 
@@ -126,6 +127,53 @@ public final class ModCompatibilityFixtures {
 			throw new AssertionError("a positive copy lookup stopped using its cache");
 		}
 		System.out.println("terrain registration: direct and copied misses recover; positive caches and registration order retained");
+	}
+
+	/** A successful copy lookup is not an explicit terrain registration in either pass. */
+	private static void cachedCopyTerrainRegistration() {
+		RenderPipeline original = RenderPipelines.SOLID_TERRAIN;
+		for (int lookup = 0; lookup < 3; lookup++) {
+			CountingPipeline copy = new CountingPipeline(original, original.getLocation());
+			if (lookup != 1 && PipelinePrograms.main(copy, PipelinePrograms.Context.WORLD) != ShaderKey.TERRAIN_SOLID) {
+				throw new AssertionError("the early main lookup did not cache a matching pipeline copy");
+			}
+			if (lookup != 0 && PipelinePrograms.shadow(copy, PipelinePrograms.Context.WORLD) != ShaderKey.SHADOW_TERRAIN_CUTOUT) {
+				throw new AssertionError("the early shadow lookup did not cache a matching pipeline copy");
+			}
+			int mainCount = PipelinePrograms.mainPipelines().size();
+			int shadowCount = PipelinePrograms.shadowPipelines().size();
+			if (!PipelinePrograms.addTerrain(copy, ShaderKey.TERRAIN_CUTOUT, ShaderKey.SHADOW_TRANSLUCENT)) {
+				throw new AssertionError("a cached copy match prevented explicit terrain registration");
+			}
+			if (PipelinePrograms.main(copy, PipelinePrograms.Context.WORLD) != ShaderKey.TERRAIN_CUTOUT
+					|| PipelinePrograms.shadow(copy, PipelinePrograms.Context.WORLD) != ShaderKey.SHADOW_TRANSLUCENT) {
+				throw new AssertionError("explicit terrain registration retained a cached copy's shader choice");
+			}
+			if (PipelinePrograms.mainPipelines().size() != mainCount + 1
+					|| PipelinePrograms.shadowPipelines().size() != shadowCount + 1
+					|| PipelinePrograms.mainPipelines().get(mainCount) != copy
+					|| PipelinePrograms.shadowPipelines().get(shadowCount) != copy) {
+				throw new AssertionError("a cached copy was not appended to both prebuild registration lists");
+			}
+			if (PipelinePrograms.addTerrain(copy, ShaderKey.TERRAIN_CUTOUT, ShaderKey.SHADOW_TRANSLUCENT)
+					|| PipelinePrograms.mainPipelines().size() != mainCount + 1
+					|| PipelinePrograms.shadowPipelines().size() != shadowCount + 1) {
+				throw new AssertionError("a promoted pipeline copy was registered more than once");
+			}
+			int before = copy.locationReads;
+			for (int draw = 0; draw < 1_000; draw++) {
+				PipelinePrograms.main(copy, PipelinePrograms.Context.WORLD);
+				PipelinePrograms.shadow(copy, PipelinePrograms.Context.WORLD);
+			}
+			if (copy.locationReads != before) {
+				throw new AssertionError("registered terrain resumed scanning for pipeline copies");
+			}
+		}
+		if (PipelinePrograms.main(original, PipelinePrograms.Context.WORLD) != ShaderKey.TERRAIN_SOLID
+				|| PipelinePrograms.shadow(original, PipelinePrograms.Context.WORLD) != ShaderKey.SHADOW_TERRAIN_CUTOUT) {
+			throw new AssertionError("promoting a copy changed the original pipeline's registration");
+		}
+		System.out.println("terrain registration: early main/shadow copy matches promote to originals; shader choices, prebuild order and duplicate guards pass");
 	}
 
 	private static void lodFallback() {

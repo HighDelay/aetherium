@@ -1,7 +1,8 @@
 package dev.spacebod.aetherium.shaders.engine;
 
 import com.google.common.collect.ImmutableList;
-import com.mojang.renderpearl.api.GpuFormat;
+import dev.spacebod.aetherium.client.gpu.DeviceTraits;
+import dev.spacebod.aetherium.client.gpu.GeometryStages;
 import dev.spacebod.aetherium.shaders.shaderpack.DimensionId;
 import dev.spacebod.aetherium.shaders.shaderpack.ShaderPack;
 import dev.spacebod.aetherium.shaders.shaderpack.loading.ProgramArrayId;
@@ -11,12 +12,22 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Map;
+import net.minecraft.SharedConstants;
+import net.minecraft.server.Bootstrap;
 
 public final class ComputeImageFormatFixtures {
 	private ComputeImageFormatFixtures() {
 	}
 
+	public static void main(String[] args) {
+		DeviceTraits.assumeForCompileCheck(false);
+		GeometryStages.assumeForCompileCheck(true);
+		run();
+	}
+
 	public static void run() {
+		SharedConstants.tryDetectVersion();
+		Bootstrap.bootStrap();
 		try {
 			Path directory = Files.createTempDirectory("aetherium-compute-formats-");
 			Map<String, String> files = Map.of(
@@ -52,7 +63,7 @@ public final class ComputeImageFormatFixtures {
 				StorageBindings.configure(Map.of(), false, Map.of(), true);
 				var source = programs.getCompute(ProgramArrayId.Composite)[20][0];
 				var lowered = ComputePass.lower(source, TextureStage.COMPOSITE_AND_FINAL);
-				if (lowered == null || TargetImageViews.formats(lowered.glsl()).get("colorimg2") != GpuFormat.RGBA16_FLOAT) {
+				if (lowered == null || !"rgba16f".equals(ImageViews.declaredFormat(lowered.glsl()))) {
 					throw new AssertionError("the loaded compute program retained normalized image storage on a float target");
 				}
 			} finally {
